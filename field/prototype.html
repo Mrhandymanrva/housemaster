@@ -1,0 +1,508 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>HouseMaster field app — radon deployment</title>
+<style>
+  :root {
+    --bg:#F1F4F8; --surface:#fff; --surface-2:#F7F9FC; --surface-3:#EDF1F6;
+    --line:#E1E7EF; --line-2:#CFD8E3;
+    --text:#16202C; --text-2:#56657A; --text-3:#8A97A8;
+    --red:#D33A2C; --red-bg:#FDECEA; --amber:#B06A00; --amber-bg:#FFF3DE;
+    --green:#1B7F55; --green-bg:#E6F6EF; --blue:#2A6BB0; --blue-bg:#E9F1FB;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+       font:15px/1.55 Inter,system-ui,-apple-system,sans-serif;-webkit-font-smoothing:antialiased}
+  h1,h2,h3{margin:0;letter-spacing:-.018em}
+  .page{max-width:1180px;margin:0 auto;padding:36px 24px 80px}
+  .lede{max-width:640px;margin-bottom:28px}
+  .lede h1{font-size:26px;margin-bottom:8px}
+  .lede p{color:var(--text-2);margin:0}
+
+  .stage{display:grid;grid-template-columns:340px 1fr;gap:34px;align-items:start}
+  @media(max-width:860px){.stage{grid-template-columns:1fr}}
+
+  /* ---------------------------------------------------------- the phone */
+  .phone{width:340px;border:10px solid #232E3C;border-radius:42px;overflow:hidden;
+         background:var(--surface);box-shadow:0 30px 60px -24px rgba(16,24,40,.5);
+         position:sticky;top:24px}
+  .notch{height:22px;background:#232E3C;border-radius:0 0 13px 13px;width:120px;margin:0 auto}
+  .statusbar{display:flex;align-items:center;gap:6px;padding:8px 16px 0;
+             font-size:12px;color:var(--text-3)}
+  .screen{padding:14px 16px 26px;min-height:600px;display:flex;flex-direction:column}
+  .appbar{display:flex;align-items:center;gap:10px;margin-bottom:16px}
+  .appbar h2{font-size:19px}
+  .back{background:none;border:none;padding:0;color:var(--text-2);cursor:pointer;font-size:22px;line-height:1}
+
+  .tile{display:flex;gap:12px;align-items:center;width:100%;text-align:left;
+        padding:15px;margin-bottom:10px;border:1px solid var(--line);border-radius:14px;
+        background:var(--surface);cursor:pointer;font:inherit}
+  .tile:active{background:var(--surface-2)}
+  .tile .ic{width:38px;height:38px;border-radius:11px;display:grid;place-items:center;
+            background:var(--blue-bg);color:var(--blue);flex:0 0 38px;font-size:18px}
+  .tile b{display:block;font-size:15px}
+  .tile span{font-size:13px;color:var(--text-2)}
+  .tile.flag{border-color:rgba(211,58,44,.4);background:var(--red-bg)}
+  .tile.flag .ic{background:#fff;color:var(--red)}
+
+  .sect{font-size:12px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;
+        color:var(--text-3);margin:4px 0 8px}
+  .job{border:1px solid var(--blue);background:var(--blue-bg);border-radius:14px;
+       padding:13px 14px;margin-bottom:14px}
+  .job-top{display:flex;align-items:center;gap:8px;margin-bottom:4px}
+  .job-top b{font-size:14.5px}
+  .chip{margin-left:auto;background:#fff;border-radius:999px;padding:2px 9px;
+        font-size:11.5px;font-weight:600;color:var(--blue);font-family:ui-monospace,monospace}
+  .job-meta{font-size:12.5px;color:var(--text-2)}
+  .job-note{font-size:12px;color:var(--blue);margin-top:6px;font-weight:500}
+  .qa-alert{border-radius:14px;padding:14px;margin-bottom:16px}
+  .qa-alert.stop{background:var(--red-bg);border:1px solid rgba(211,58,44,.35)}
+  .qa-alert.warn{background:var(--amber-bg);border:1px solid rgba(176,106,0,.3)}
+  .qa-alert.ok{background:var(--surface-2);border:1px solid var(--line)}
+  .qa-alert b{display:block;font-size:14.5px;margin-bottom:3px}
+  .qa-alert.stop b{color:var(--red)}
+  .qa-alert.warn b{color:var(--amber)}
+  .qa-alert span{font-size:13px;color:var(--text-2);display:block}
+  .qa-alert.stop span{color:#8E251A}
+
+  .cycle{display:flex;gap:3px;margin:10px 0 2px}
+  .cycle i{flex:1;height:7px;border-radius:3px;background:var(--line-2)}
+  .cycle i.on{background:var(--blue)}
+  .cycle i.qa{background:#fff;border:1.5px solid var(--red)}
+  .cycle i.qa.on{background:var(--red);border-color:var(--red)}
+
+  .f{margin-bottom:14px}
+  .f label{display:block;font-size:13px;font-weight:550;margin-bottom:5px}
+  .f label .req{color:var(--red)}
+  .f .ctl{width:100%;border:1px solid var(--line-2);border-radius:10px;padding:11px 12px;
+          font:inherit;font-size:14px;background:var(--surface);color:var(--text)}
+  .f.qa label{color:var(--red)}
+  .f.qa .ctl{border-color:rgba(211,58,44,.45)}
+  .f .hint{font-size:12.5px;color:var(--text-2);margin-top:4px}
+  .f .err{font-size:12.5px;color:var(--red);margin-top:4px;font-weight:500}
+  .cam{height:74px;border:1.5px dashed var(--line-2);border-radius:10px;display:grid;
+       place-items:center;color:var(--text-3);font-size:13px;cursor:pointer;background:var(--surface-2)}
+  .cam.done{border-style:solid;border-color:var(--green);background:var(--green-bg);color:var(--green)}
+  .cam.qa{border-color:rgba(211,58,44,.5)}
+  .cam.qa.done{border-color:var(--green)}
+
+  .cta{margin-top:auto;padding-top:14px}
+  .btn{width:100%;padding:14px;border-radius:12px;border:none;font:inherit;font-size:15px;
+       font-weight:600;cursor:pointer;background:var(--red);color:#fff}
+  .btn[disabled]{background:var(--line-2);color:#fff;cursor:not-allowed}
+  .btn.ghost{background:var(--surface);border:1px solid var(--line-2);color:var(--text);font-weight:500}
+  .problems{background:var(--red-bg);border-radius:12px;padding:12px 14px;margin-bottom:12px}
+  .problems b{font-size:13.5px;color:var(--red);display:block;margin-bottom:4px}
+  .problems li{font-size:13px;color:#8E251A;margin-left:16px}
+
+  .done-wrap{text-align:center;padding:40px 10px;margin:auto 0}
+  .done-mark{width:64px;height:64px;border-radius:50%;margin:0 auto 16px;display:grid;
+             place-items:center;font-size:30px;background:var(--green-bg);color:var(--green)}
+  .done-mark.queue{background:var(--amber-bg);color:var(--amber)}
+  .done-wrap h3{font-size:19px;margin-bottom:6px}
+  .done-wrap p{color:var(--text-2);font-size:14px;margin:0 0 6px}
+
+  /* ------------------------------------------------------- the controls */
+  .panel{background:var(--surface);border:1px solid var(--line);border-radius:14px;
+         padding:22px 24px;margin-bottom:18px;box-shadow:0 1px 2px rgba(16,24,40,.05)}
+  .panel h3{font-size:17px;margin-bottom:6px}
+  .panel p{color:var(--text-2);margin:0 0 16px;font-size:14.5px}
+  .row{display:flex;align-items:center;gap:14px;padding:12px 0;border-bottom:1px solid var(--line)}
+  .row:last-child{border-bottom:none}
+  .row b{display:block;font-size:14.5px}
+  .row span{font-size:13.5px;color:var(--text-2)}
+  .seg{display:inline-flex;background:var(--surface-3);border-radius:10px;padding:3px;gap:2px;margin-left:auto}
+  .seg button{border:none;background:none;padding:7px 13px;border-radius:8px;font:inherit;
+              font-size:14px;color:var(--text-2);cursor:pointer}
+  .seg button.on{background:var(--surface);color:var(--text);font-weight:600;box-shadow:0 1px 2px rgba(16,24,40,.1)}
+  .layers li{margin-bottom:14px;font-size:14.5px;list-style:none}
+  .layers li b{display:block}
+  .layers li span{color:var(--text-2);font-size:14px}
+  .layers .n{display:inline-grid;place-items:center;width:24px;height:24px;border-radius:50%;
+             background:var(--text);color:#fff;font-size:13px;font-weight:600;margin-right:9px}
+  .log{font:12.5px/1.7 ui-monospace,monospace;background:#0F1A29;color:#B9C8DC;
+       border-radius:12px;padding:16px 18px;max-height:280px;overflow:auto}
+  .log .k{color:#7FB3E8}.log .r{color:#F08C82}.log .g{color:#6BD3A6}
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="lede">
+    <h1>What the tech sees</h1>
+    <p>The duplicate rule as it lands on the phone. Change the monitor and the signal
+       below and watch the form change with it. Everything here runs the same
+       <code>qa-guard.js</code> that ships in the app.</p>
+  </div>
+
+  <div class="stage">
+    <div class="phone">
+      <div class="notch"></div>
+      <div class="statusbar"><span id="sig">●</span><span id="sigtext">Online</span>
+        <span style="margin-left:auto" id="queue"></span></div>
+      <div class="screen" id="screen"></div>
+    </div>
+
+    <div>
+      <div class="panel">
+        <h3>Try it</h3>
+        <p>Pick a monitor mid-cycle and one on its tenth set, then take the signal away.</p>
+        <div class="row">
+          <div><b>Which monitor</b><span id="devnote">—</span></div>
+          <div class="seg" id="devseg"></div>
+        </div>
+        <div class="row">
+          <div><b>ISN link</b><span>Jobs pulled from the order, or nothing prefilled.</span></div>
+          <div class="seg" id="preseg">
+            <button data-pre="1" class="on">Connected</button>
+            <button data-pre="0">Not connected</button>
+          </div>
+        </div>
+        <div class="row">
+          <div><b>Signal</b><span>Offline changes what the phone can know, not what it demands.</span></div>
+          <div class="seg" id="netseg">
+            <button data-net="1" class="on">Online</button>
+            <button data-net="0">No signal</button>
+          </div>
+        </div>
+        <div class="row">
+          <div><b>Last sync</b><span>A stale ledger makes the phone cautious.</span></div>
+          <div class="seg" id="syncseg">
+            <button data-days="1" class="on">Today</button>
+            <button data-days="6">6 days</button>
+            <button data-days="21">21 days</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h3>Where it is enforced</h3>
+        <ul class="layers" style="padding:0;margin:0">
+          <li><span class="n">1</span><b>On the phone, before the form opens</b>
+            <span>The tile is flagged red on the home screen, so the tech knows to carry a
+            second monitor before leaving the van — not after arriving.</span></li>
+          <li><span class="n">2</span><b>On the phone, at the submit tap</b>
+            <span>The send button stays dead until the second unit, its spacing and a photo
+            of the pair are all filled in. This works with no signal.</span></li>
+          <li><span class="n">3</span><b>At the API, on upload</b>
+            <span>The server recomputes the set number from the database rather than trusting
+            the phone, and rejects an online submission that owes a duplicate.</span></li>
+          <li><span class="n">4</span><b>In the database, on deploy</b>
+            <span>A trigger refuses to let a set reach Deployed without its pair. This is the
+            layer that holds against imports, manual updates and future clients.</span></li>
+        </ul>
+      </div>
+
+      <div class="panel">
+        <h3>What the phone is thinking</h3>
+        <p>The decision, live, from the cached ledger.</p>
+        <div class="log" id="log"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+/* The real module, inlined so this file opens with no server. ------------- */
+const STALE_AFTER_DAYS = 14;
+
+function decide(entry, now = new Date()) {
+  const interval = entry?.interval ?? 10;
+  if (!entry || entry.completedSets == null || !entry.syncedAt) {
+    return { requiresDuplicate: true, confident: false, sequence: null, interval,
+      reason: 'This phone has not synced this monitor yet, so it cannot tell where it is in its cycle. Take two to be safe.',
+      short: 'Take two monitors' };
+  }
+  const ageDays = (now - new Date(entry.syncedAt)) / 86400000;
+  const local = entry.localSetsSinceSync ?? 0;
+  const sequence = entry.completedSets + local + 1;
+  if (ageDays > STALE_AFTER_DAYS || local >= interval) {
+    return { requiresDuplicate: true, confident: false, sequence, interval,
+      reason: ageDays > STALE_AFTER_DAYS
+        ? `Last synced ${Math.round(ageDays)} days ago. The count may have moved since. Take two.`
+        : `${local} sets placed since this phone last synced. Take two.`,
+      short: 'Take two monitors' };
+  }
+  const requires = sequence % interval === 0;
+  const until = interval - (sequence % interval);
+  return { requiresDuplicate: requires, confident: true, sequence, interval,
+    reason: requires
+      ? `Set ${sequence} on this monitor. Every ${interval}th set goes out as a pair.`
+      : `Set ${sequence} on this monitor. The next duplicate is due on set ${sequence + until}.`,
+    short: requires ? 'Take two monitors' : 'One monitor' };
+}
+
+function validateDeployment(entry, form, now = new Date()) {
+  const qa = decide(entry, now);
+  const problems = [];
+  if (!form.primary_device) problems.push('Scan or pick the monitor you placed.');
+  if (qa.requiresDuplicate) {
+    if (!form.duplicate_device) problems.push('This set needs a second monitor placed beside the first.');
+    else if (form.duplicate_device === form.primary_device) problems.push('The duplicate has to be a different unit from the primary.');
+    if (form.duplicate_distance == null || form.duplicate_distance === '') problems.push('Record how far apart the two units are.');
+    else if (Number(form.duplicate_distance) > 12) problems.push('The two units are too far apart to compare — keep them within about four inches.');
+    if (!form.duplicate_photo) problems.push('Take one photo showing both units in place.');
+  }
+  return { ok: problems.length === 0, problems, qa };
+}
+
+/* ---------------------------------------------------------------- state */
+const DEVICES = [
+  { equipmentId:'q4',  name:'Radon CRM #4',  completedSets:3,  interval:10 },
+  { equipmentId:'q1',  name:'Radon CRM #1',  completedSets:9,  interval:10 },
+  { equipmentId:'q12', name:'Radon CRM #12', completedSets:9,  interval:10 },
+];
+/* Jobs as they arrive from ISN — address, client, agent and order already on
+   the phone before the tech leaves the driveway. */
+const JOBS = [
+  { id:'rt1', isn:'88214', time:'9:00 AM', address:'4412 Oakmont Dr, Midlothian',
+    city:'Midlothian', zip:'23113', client:'K. Alvarez', clientPhone:'804-555-0148',
+    agent:'Wendy Cho — Long & Foster', foundation:'Basement', sqft:2340, year:1998,
+    services:'Home inspection + Radon' },
+  { id:'rt2', isn:'88231', time:'1:30 PM', address:'1207 Bellgrade Pl, Richmond',
+    city:'Richmond', zip:'23233', client:'D. Osei', clientPhone:'804-555-0192',
+    agent:'Ray Muniz — Shaheen', foundation:'Slab', sqft:1780, year:2006,
+    services:'Home inspection + Radon + WDI' },
+];
+
+const S = {
+  device: 'q4', online: true, syncDays: 1, view: 'home', job: null,
+  form: { primary_device:null, duplicate_device:null, duplicate_distance:'', duplicate_photo:null,
+          address:'', floor:'', photo:null, closed:false },
+  prefill: true,
+  queued: 0, showProblems: false,
+};
+
+const entry = () => {
+  const d = DEVICES.find((x) => x.equipmentId === S.device);
+  return { ...d, syncedAt: new Date(Date.now() - S.syncDays * 864e5).toISOString(), localSetsSinceSync: 0 };
+};
+const qa = () => decide(entry());
+const check = () => validateDeployment(entry(), { ...S.form, primary_device: S.device });
+
+/* ---------------------------------------------------------------- views */
+const el = (id) => document.getElementById(id);
+
+function cycle(q) {
+  if (!q.sequence) return '';
+  const pos = ((q.sequence - 1) % q.interval) + 1;
+  return `<div class="cycle">${Array.from({ length: q.interval }, (_, i) =>
+    `<i class="${i + 1 < pos ? 'on' : ''} ${i + 1 === q.interval ? 'qa' : ''} ${i + 1 === q.interval && pos === q.interval ? 'on' : ''}"></i>`).join('')}</div>`;
+}
+
+function home() {
+  const q = qa();
+  const name = DEVICES.find((d) => d.equipmentId === S.device).name;
+  const jobs = S.prefill ? JOBS : [];
+  return `
+    <div class="appbar"><h2>Today</h2></div>
+
+    ${jobs.length ? `<div class="sect">Radon on the schedule</div>` : ''}
+    ${jobs.map((j) => `
+      <button class="tile ${q.requiresDuplicate ? 'flag' : ''}" data-job="${j.id}">
+        <span class="ic">${j.time.split(':')[0]}<sup style="font-size:9px">${j.time.slice(-2)}</sup></span>
+        <span>
+          <b>${j.address}</b>
+          <span>${j.client} · ISN ${j.isn}${q.requiresDuplicate ? ' · take two monitors' : ''}</span>
+        </span>
+      </button>`).join('')}
+
+    ${jobs.length ? '' : `
+      <button class="tile ${q.requiresDuplicate ? 'flag' : ''}" data-job="blank">
+        <span class="ic">◎</span>
+        <span><b>Radon deployment</b>
+        <span>${q.requiresDuplicate ? `${name} — take two monitors`
+                                    : `${name} — set ${q.sequence} of ${q.interval}`}</span></span>
+      </button>`}
+
+    <div class="sect">Anything else</div>
+    <button class="tile"><span class="ic">◎</span><span><b>Radon retrieval</b><span>Pick up and record readings</span></span></button>
+    <button class="tile"><span class="ic">▤</span><span><b>Van check</b><span>Start of day walkaround</span></span></button>
+
+    <div class="cta">
+      <div style="font-size:12.5px;color:var(--text-3);text-align:center">
+        ${S.online ? (S.prefill ? `${JOBS.length} jobs pulled from ISN · synced `
+                                  + (S.syncDays === 1 ? 'today' : S.syncDays + ' days ago')
+                                : 'Synced ' + (S.syncDays === 1 ? 'today' : S.syncDays + ' days ago'))
+                   : 'No signal — working from what was pulled earlier'}
+      </div>
+    </div>`;
+}
+
+function form() {
+  const q = qa();
+  const v = check();
+  const job = JOBS.find((j) => j.id === S.job);
+  const show = S.showProblems && !v.ok;
+  const dupOptions = DEVICES.filter((d) => d.equipmentId !== S.device);
+  return `
+    <div class="appbar"><button class="back" data-go="home">‹</button><h2>Radon deployment</h2></div>
+
+    ${job ? `
+      <div class="job">
+        <div class="job-top"><b>${job.address}</b><span class="chip">ISN ${job.isn}</span></div>
+        <div class="job-meta">${job.city}, VA ${job.zip} · ${job.sqft} sq ft · built ${job.year}</div>
+        <div class="job-meta">${job.client} · ${job.clientPhone}</div>
+        <div class="job-meta">${job.agent}</div>
+        <div class="job-note">Filled in from the order. Nothing here is typed twice.</div>
+      </div>` : ''}
+
+    <div class="qa-alert ${q.requiresDuplicate ? (q.confident ? 'stop' : 'warn') : 'ok'}">
+      <b>${q.requiresDuplicate
+            ? (q.confident ? 'Quality-check set — take two monitors' : 'Not sure where this unit is — take two')
+            : `Set ${q.sequence} of ${q.interval} — one monitor`}</b>
+      <span>${q.reason}</span>
+      ${cycle(q)}
+    </div>
+
+    ${show ? `<div class="problems"><b>Not ready to send</b><ul>${
+      v.problems.map((p) => `<li>${p}</li>`).join('')}</ul></div>` : ''}
+
+    ${job ? '' : `
+    <div class="f"><label>Property address <span class="req">*</span></label>
+      <input class="ctl" data-f="address" value="${S.form.address}" placeholder="Street, city" /></div>`}
+
+    <div class="f"><label>Monitor placed <span class="req">*</span></label>
+      <input class="ctl" value="${DEVICES.find((d) => d.equipmentId === S.device).name}" readonly /></div>
+
+    <div class="f"><label>Floor <span class="req">*</span></label>
+      <select class="ctl" data-f="floor">
+        <option value="">Choose one…</option>
+        ${['Basement', 'Crawlspace', 'First floor', 'Second floor']
+          .map((o) => `<option ${(S.form.floor || job?.foundation) === o ? 'selected' : ''}>${o}</option>`).join('')}
+      </select></div>
+
+    <div class="f"><label>Photo of placement <span class="req">*</span></label>
+      <div class="cam ${S.form.photo ? 'done' : ''}" data-shot="photo">
+        ${S.form.photo ? '✓ Photo taken' : '⃞ Tap to take a photo'}</div></div>
+
+    ${q.requiresDuplicate ? `
+      <div class="f qa"><label>Second monitor <span class="req">*</span></label>
+        <select class="ctl" data-f="duplicate_device">
+          <option value="">Scan or pick the second unit…</option>
+          ${dupOptions.map((d) => `<option value="${d.equipmentId}" ${
+            S.form.duplicate_device === d.equipmentId ? 'selected' : ''}>${d.name}</option>`).join('')}
+        </select>
+        <div class="hint">Place it beside the first one, same height, same room.</div></div>
+
+      <div class="f qa"><label>Inches between the two <span class="req">*</span></label>
+        <input class="ctl" type="number" data-f="duplicate_distance"
+               value="${S.form.duplicate_distance}" placeholder="4" />
+        <div class="hint">Keep them within about four inches.</div></div>
+
+      <div class="f qa"><label>Photo of both together <span class="req">*</span></label>
+        <div class="cam qa ${S.form.duplicate_photo ? 'done' : ''}" data-shot="duplicate_photo">
+          ${S.form.duplicate_photo ? '✓ Pair photographed' : '⃞ One shot showing both units'}</div></div>
+    ` : ''}
+
+    <div class="cta">
+      <button class="btn" data-send="1" ${v.ok ? '' : 'disabled'}>
+        ${v.ok ? (S.online ? 'Send it in' : 'Save and send when I have signal')
+               : (q.requiresDuplicate ? 'Second monitor required' : 'Fill in the rest')}
+      </button>
+    </div>`;
+}
+
+function done() {
+  const q = qa();
+  return `
+    <div class="appbar"><button class="back" data-go="home">‹</button><h2>Sent</h2></div>
+    <div class="done-wrap">
+      <div class="done-mark ${S.online ? '' : 'queue'}">${S.online ? '✓' : '⇡'}</div>
+      <h3>${S.online ? 'Set recorded' : 'Saved on the phone'}</h3>
+      <p>${S.online
+        ? 'The office can see it. Pickup lands on the calendar in 48 hours.'
+        : 'It will send itself the moment you have a bar of signal. Nothing is lost.'}</p>
+      ${q.requiresDuplicate ? `<p style="color:var(--green);font-weight:550">
+        Duplicate pair logged — this monitor's cycle starts over.</p>` : ''}
+    </div>
+    <div class="cta"><button class="btn ghost" data-go="home">Back to today</button></div>`;
+}
+
+function log() {
+  const q = qa();
+  const v = check();
+  const e = entry();
+  return `<div>
+<span class="k">ledger</span>  ${e.name}  completed=${e.completedSets}  interval=${e.interval}
+<span class="k">synced</span>  ${S.syncDays} day${S.syncDays === 1 ? '' : 's'} ago   network=${S.online ? 'online' : 'offline'}
+
+<span class="k">decide()</span>
+  sequence          ${q.sequence ?? 'unknown'}
+  confident         <span class="${q.confident ? 'g' : 'r'}">${q.confident}</span>
+  requiresDuplicate <span class="${q.requiresDuplicate ? 'r' : 'g'}">${q.requiresDuplicate}</span>
+  reason            ${q.reason}
+
+<span class="k">validateDeployment()</span>
+  ok                <span class="${v.ok ? 'g' : 'r'}">${v.ok}</span>${
+  v.problems.length ? '\n' + v.problems.map((p) => `  <span class="r">blocked</span>       ${p}`).join('\n') : ''}
+</div>`;
+}
+
+function render() {
+  el('screen').innerHTML = S.view === 'home' ? home() : S.view === 'form' ? form() : done();
+  el('log').innerHTML = log();
+  el('sig').style.color = S.online ? 'var(--green)' : 'var(--red)';
+  el('sigtext').textContent = S.online ? 'Online' : 'No signal';
+  el('queue').textContent = S.queued ? `${S.queued} queued` : '';
+  el('devnote').textContent = qa().requiresDuplicate
+    ? 'This one is due for a duplicate.' : 'This one is mid-cycle.';
+  document.querySelectorAll('[data-pre]').forEach((b) =>
+    b.classList.toggle('on', (b.dataset.pre === '1') === S.prefill));
+  el('devseg').innerHTML = DEVICES.map((d) => `<button data-dev="${d.equipmentId}"
+    class="${S.device === d.equipmentId ? 'on' : ''}">#${d.name.split('#')[1]}</button>`).join('');
+}
+
+document.addEventListener('click', (ev) => {
+  const t = ev.target.closest('[data-go],[data-dev],[data-net],[data-days],[data-shot],[data-send],[data-job],[data-pre]');
+  if (!t) return;
+  if (t.dataset.go) { S.view = t.dataset.go; S.showProblems = false; }
+  if (t.dataset.job) {
+    S.job = t.dataset.job === 'blank' ? null : t.dataset.job;
+    const j = JOBS.find((x) => x.id === S.job);
+    S.form.address = j?.address || '';
+    S.form.floor = j?.foundation || '';
+    S.view = 'form'; S.showProblems = false;
+  }
+  if (t.dataset.pre) S.prefill = t.dataset.pre === '1';
+  if (t.dataset.dev) {
+    S.device = t.dataset.dev;
+    S.form.duplicate_device = null; S.form.duplicate_distance = ''; S.form.duplicate_photo = null;
+  }
+  if (t.dataset.net) S.online = t.dataset.net === '1';
+  if (t.dataset.days) S.syncDays = Number(t.dataset.days);
+  if (t.dataset.shot) S.form[t.dataset.shot] = S.form[t.dataset.shot] ? null : 'blob:photo';
+  if (t.dataset.send) {
+    const v = check();
+    if (!v.ok) { S.showProblems = true; }
+    else {
+      if (!S.online) S.queued += 1;
+      S.view = 'done';
+      S.form = { primary_device:null, duplicate_device:null, duplicate_distance:'',
+                 duplicate_photo:null, address:'', floor:'', photo:null, closed:false };
+    }
+  }
+  render();
+});
+
+document.addEventListener('input', (ev) => {
+  const f = ev.target.dataset.f;
+  if (!f) return;
+  S.form[f] = ev.target.value;
+  if (S.showProblems) { render(); ev.target.focus?.(); return; }
+  el('log').innerHTML = log();
+  const b = document.querySelector('[data-send]');
+  if (b) { const v = check(); b.disabled = !v.ok; }
+});
+document.addEventListener('change', (ev) => {
+  const f = ev.target.dataset.f;
+  if (!f) return;
+  S.form[f] = ev.target.value;
+  render();
+});
+
+render();
+</script>
+</body>
+</html>

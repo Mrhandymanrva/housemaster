@@ -1,0 +1,7 @@
+# Keep everything LF in the repo and in the working copy. The Dockerfile and
+# the Railway build run on Linux; mixed endings turn one-line edits into
+# whole-file diffs.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.ico binary
