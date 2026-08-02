@@ -11,8 +11,9 @@ import Records from './pages/Records.jsx';
 import FieldSetup from './pages/FieldSetup.jsx';
 import Radon from './pages/Radon.jsx';
 import Inbox from './pages/Inbox.jsx';
+import Team from './pages/Team.jsx';
 
-/* Five places to go. That is the whole app. */
+/* Where you can go. `min` hides a destination from anyone below that role. */
 const NAV = [
   { key: 'home',      label: 'Home',            icon: 'home' },
   { key: 'attention', label: 'Needs attention', icon: 'alert' },
@@ -20,7 +21,11 @@ const NAV = [
   { key: 'records',   label: 'Records',         icon: 'table' },
   { key: 'inbox',     label: 'From the field',  icon: 'inbox' },
   { key: 'field',     label: 'Phone app',       icon: 'phone' },
+  { key: 'team',      label: 'Logins',          icon: 'users', min: 'admin' },
 ];
+
+const RANK = { field: 1, office: 2, admin: 3, owner: 4 };
+const allowed = (n, role) => !n.min || (RANK[role] || 0) >= RANK[n.min];
 
 const PAGE = {
   home:      ['Home', "Where everything stands this morning."],
@@ -29,12 +34,15 @@ const PAGE = {
   records:   ['Records', 'All the information you keep. Pick something to look at.'],
   inbox:     ['From the field', 'What your people sent in from their phones, waiting on you.'],
   field:     ['Phone app', 'Decide what your people see on their phones. Changes show up the next time they open it.'],
+  team:      ['Logins', 'Who can sign in, and what each of them is allowed to do.'],
 };
 
 const initials = (n = '') => n.split(' ').map((w) => w[0]).slice(0, 2).join('').toUpperCase();
 
 export default function App() {
-  const [user, setUser] = useState(DEMO ? { name: 'Mason Holloway', role: 'owner' } : null);
+  const [user, setUser] = useState(
+    DEMO ? { id: 'u1', name: 'Mason Holloway', role: 'owner', email: 'mason@hmrichmond.com' } : null
+  );
   const [cat, setCat] = useState([]);
   const [route, setRoute] = useState('home');
   const [pending, setPending] = useState(0);
@@ -71,7 +79,7 @@ export default function App() {
           </div>
         </div>
 
-        {NAV.map((n) => (
+        {NAV.filter((n) => allowed(n, user.role)).map((n) => (
           <button key={n.key} className={`nav-item ${nav === n.key ? 'active' : ''}`}
                   onClick={() => setRoute(n.key)}>
             <Icon name={n.icon} size={19} /> {n.label}
@@ -113,6 +121,7 @@ export default function App() {
           {route === 'records' && <RecordsHub entities={cat} go={setRoute} />}
           {route === 'inbox' && <Inbox onCount={setPending} />}
           {route === 'field' && <FieldSetup />}
+          {route === 'team' && allowed({ min: 'admin' }, user.role) && <Team me={user} />}
           {entity && <Records key={entity.key} entity={entity} />}
         </div>
       </main>

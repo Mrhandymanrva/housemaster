@@ -9,6 +9,7 @@ import { readdir, readFile } from 'node:fs/promises';
 import { pool, q } from './lib/db.js';
 import { syncCatalog } from './catalog/sync.js';
 import authRoutes from './routes/auth.js';
+import userRoutes from './routes/users.js';
 import recordRoutes from './routes/records.js';
 import opsRoutes from './routes/ops.js';
 import radonRoutes from './routes/radon.js';
@@ -33,6 +34,7 @@ app.get('/api/health', async (_req, res) => {
 });
 
 app.use('/api/auth', authRoutes);
+app.use('/api/users', userRoutes);
 app.use('/api/ops', opsRoutes);
 app.use('/api/radon', radonRoutes);
 app.use('/api/isn', isnRoutes);

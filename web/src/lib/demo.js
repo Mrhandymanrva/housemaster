@@ -402,11 +402,28 @@ const anyDetail = (id) => testDetail[id] || {
   ],
 };
 
+const DEMO_ME = {
+  id: 'u1', name: 'Mason Holloway', role: 'owner', email: 'mason@hmrichmond.com',
+};
+
+const demoLogins = [
+  { id: 'u1', email: 'mason@hmrichmond.com', full_name: 'Mason Holloway', job_title: 'Owner',
+    app_role: 'owner', active: true, last_login_at: hoursAgo(2) },
+  { id: 'u2', email: 'angela@hmrichmond.com', full_name: 'Angela Pryor', job_title: 'Client Services',
+    app_role: 'office', active: true, last_login_at: hoursAgo(26) },
+  { id: 'u3', email: 'dale@hmrichmond.com', full_name: 'Dale Whitfield', job_title: 'Lead Inspector',
+    app_role: 'field', active: true, last_login_at: hoursAgo(9) },
+  { id: 'u4', email: 'trevor@hmrichmond.com', full_name: 'Trevor Banks', job_title: 'Radon Technician',
+    app_role: 'field', active: true, last_login_at: null },
+];
+
 export async function demoFetch(path, opts = {}) {
   await new Promise((r) => setTimeout(r, 90));
   const [p] = path.split('?');
 
-  if (p === '/auth/login') return { token: 'demo', user: { name: 'Mason Holloway', role: 'owner', email: 'mason@hmrichmond.com' } };
+  if (p === '/auth/login') return { token: 'demo', user: DEMO_ME };
+  if (p === '/auth/me') return { user: DEMO_ME };
+  if (p === '/users') return { users: demoLogins, roles: ['field', 'office', 'admin', 'owner'] };
   if (p === '/records/catalog') return { entities: catalog };
   if (p === '/ops/lookups') return { lookups: {} };
   if (p === '/ops/field/config') return { modules };

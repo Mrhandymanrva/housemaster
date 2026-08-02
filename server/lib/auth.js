@@ -3,6 +3,11 @@ import bcrypt from 'bcryptjs';
 import { q } from './db.js';
 import { forbidden, HttpError } from './http.js';
 
+// A deployed server with no JWT_SECRET would sign every session with a string
+// that is printed in this file, so it refuses to start instead of pretending.
+if (process.env.NODE_ENV === 'production' && !process.env.JWT_SECRET) {
+  throw new Error('JWT_SECRET is not set. Set it before starting in production.');
+}
 const SECRET = process.env.JWT_SECRET || 'dev-only-change-me';
 const RANK = { field: 1, office: 2, admin: 3, owner: 4 };
 
@@ -13,15 +18,40 @@ export const signToken = (user) =>
     { expiresIn: '12h' }
   );
 
-export function requireAuth(req, _res, next) {
+export async function requireAuth(req, _res, next) {
   const header = req.headers.authorization || '';
   const token = header.startsWith('Bearer ') ? header.slice(7) : null;
   if (!token) return next(new HttpError(401, 'Sign in to continue'));
+
+  let claims;
   try {
-    req.user = jwt.verify(token, SECRET);
-    next();
+    claims = jwt.verify(token, SECRET);
   } catch {
-    next(new HttpError(401, 'Session expired. Sign in again.'));
+    return next(new HttpError(401, 'Session expired. Sign in again.'));
+  }
+
+  // The token says what the role was up to 12 hours ago. Switching someone off,
+  // or moving them down a role, has to take hold on the next request rather
+  // than whenever their token happens to run out.
+  try {
+    const { rows } = await q(
+      `SELECT u.id, u.email, u.app_role, u.employee_id, u.active, e.full_name
+         FROM users u LEFT JOIN employees e ON e.id = u.employee_id
+        WHERE u.id = $1`,
+      [claims.id]
+    );
+    const user = rows[0];
+    if (!user || !user.active) return next(new HttpError(401, 'This login is no longer active.'));
+    req.user = {
+      id: user.id,
+      email: user.email,
+      role: user.app_role,
+      employee_id: user.employee_id,
+      name: user.full_name || user.email,
+    };
+    next();
+  } catch (err) {
+    next(err);
   }
 }
 

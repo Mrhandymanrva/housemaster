@@ -111,6 +111,15 @@ docs/              schema decisions, field app guide
   `credential_vault_ref` holds the *name* of your password manager entry.
 - Four roles: owner, admin, office, field. Writes need office or higher, deletes
   need admin, field app configuration needs admin.
+- Logins are managed in the app under **Logins** (admin and up): add someone, move
+  them between roles, switch them off, reset a password. Nobody can grant access
+  above their own role, edit an account senior to their own, switch off their own
+  login, or remove the last active owner. Every request re-reads the role from the
+  database, so switching someone off takes hold on their next request rather than
+  whenever their 12-hour token happens to expire.
+- `JWT_SECRET` has a development fallback. Under `NODE_ENV=production` the server
+  refuses to start without a real one instead of signing every session with a
+  string that is printed in the source.
 - Every column name that reaches SQL is checked against the catalog first, and all
   values are parameterized.
 - Every create, update, delete and field submission is written to `audit_log`.
