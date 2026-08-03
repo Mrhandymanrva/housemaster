@@ -87,11 +87,133 @@ async function call(path, { method = 'GET', body } = {}) {
   return res.status === 204 ? null : res.json();
 }
 
+/**
+ * Describe a payload without printing it.
+ *
+ * When a response is not the shape we expected, the useful thing is its
+ * shape — not its contents, which are client names and addresses. This goes
+ * into the sync log, so the error a person reads says what arrived rather than
+ * that something was "not iterable".
+ */
+export function describeShape(v, depth = 0) {
+  if (v === null) return 'null';
+  if (Array.isArray(v)) {
+    return depth > 1 ? `array(${v.length})`
+      : `array(${v.length})${v.length ? ' of ' + describeShape(v[0], depth + 1) : ''}`;
+  }
+  if (typeof v === 'object') {
+    const keys = Object.keys(v);
+    if (depth > 1) return `object{${keys.slice(0, 8).join(', ')}}`;
+    return `object{ ${keys.slice(0, 12).map((k) => `${k}: ${describeShape(v[k], depth + 1)}`).join(', ')}${
+      keys.length > 12 ? ', …' : ''} }`;
+  }
+  return typeof v;
+}
+
+/**
+ * Find the list in a response.
+ *
+ * ISN wraps its collections, and not always the same way. Rather than assume
+ * one envelope, look for a list where a list should be — and if there is not
+ * one, say what did arrive instead of failing on `not iterable` three frames
+ * later.
+ */
+export function extractList(payload, what) {
+  if (Array.isArray(payload)) return payload;
+  if (payload && typeof payload === 'object') {
+    // an envelope naming the thing: { footprints: [...] } / { data: [...] }
+    for (const key of [what, 'data', 'results', 'items', 'records', 'rows', 'result']) {
+      if (Array.isArray(payload[key])) return payload[key];
+    }
+    // an envelope with exactly one array in it, whatever it is called
+    const arrays = Object.values(payload).filter(Array.isArray);
+    if (arrays.length === 1) return arrays[0];
+    // keyed by id: { "123": {...}, "124": {...} }
+    const values = Object.values(payload);
+    if (values.length && values.every((v) => v && typeof v === 'object' && !Array.isArray(v))) {
+      return values;
+    }
+    // an empty envelope is an empty list, not a failure
+    if (!values.length) return [];
+    if (payload.status && Object.keys(payload).length <= 2) return [];
+  }
+  throw new Error(
+    `ISN returned something that is not a list of ${what}. It sent: ${describeShape(payload)}`
+  );
+}
+
+/**
+ * What does this endpoint actually answer with?
+ *
+ * Returns the shape and the field names, never the values — an order carries a
+ * client's name, phone and address, and none of that is needed to work out
+ * which envelope ISN is using.
+ */
+export async function probe(path) {
+  const base = await resolveEndpoint();
+  const started = Date.now();
+  let res;
+  try {
+    res = await fetch(`${base}${path}`, {
+      headers: { Authorization: auth(), Accept: 'application/json' },
+    });
+  } catch (err) {
+    return { path, url: `${base}${path}`, reachable: false, error: err.message };
+  }
+
+  const text = await res.text().catch(() => '');
+  const out = {
+    path,
+    url: `${base}${path}`,
+    reachable: true,
+    status: res.status,
+    contentType: res.headers.get('content-type'),
+    bytes: text.length,
+    ms: Date.now() - started,
+  };
+
+  try {
+    const body = JSON.parse(text);
+    out.shape = describeShape(body);
+    const list = Array.isArray(body) ? body
+      : (body && typeof body === 'object'
+          ? Object.values(body).find(Array.isArray) || null
+          : null);
+    if (list?.length && list[0] && typeof list[0] === 'object') {
+      out.itemFields = Object.keys(list[0]);
+    } else if (body && typeof body === 'object' && !Array.isArray(body)) {
+      out.topLevelFields = Object.keys(body);
+    }
+  } catch {
+    // not JSON — say what it looks like without echoing it back
+    out.shape = 'not JSON';
+    out.startsWith = text.slice(0, 40).replace(/\s+/g, ' ');
+  }
+  return out;
+}
+
 export const getFootprints = () => call('/orders/footprints');
 export const dropFootprint = (id) => call(`/orders/footprint/${id}`, { method: 'DELETE' });
 export const getOrder = (id) => call(`/order/${id}`);
 export const getClient = (id) => call(`/client/${id}`);
 export const getAgent = (id) => call(`/agent/${id}`);
+
+/** Whose keys are these? ISN scopes footprints to the authenticated user. */
+export const getMe = () => call('/me');
+
+/** Every user on the ISN — inspectors, office, owners. */
+export const getUsers = () => call('/users');
+
+/**
+ * Every order, not just the ones belonging to whoever owns the keys.
+ *
+ * Footprints are a per-user change feed: ISN's own documentation says they are
+ * the upcoming inspections of "the inspector whom logged in". A single set of
+ * office keys would therefore see one person's work, or none at all if that
+ * account is never assigned an inspection. /orders is company-wide, which is
+ * what a back office actually needs.
+ */
+export const getOrders = () => call('/orders');
 
 // --------------------------------------------------------------- mapping
 
@@ -160,13 +282,41 @@ export async function syncOnce({ source = 'schedule' } = {}) {
   const failures = [];
 
   try {
-    const footprints = await getFootprints();
-    counts.footprints = footprints?.length ?? 0;
+    // Two sources, on purpose.
+    //
+    // /orders is company-wide, which is what the office needs: one set of keys
+    // sees every inspector's work. Footprints are ISN's change feed and are
+    // scoped to whoever owns the keys — useful, but on their own they would
+    // show one person's day, or nobody's if that account never takes jobs.
+    //
+    // Footprints are still consumed and deleted, because ISN expects that and
+    // they pile up otherwise.
+    const [everyOrder, footprints] = await Promise.all([
+      getOrders().then((x) => extractList(x, 'orders')).catch((e) => {
+        failures.push({ stage: 'orders', error: e.message });
+        return [];
+      }),
+      getFootprints().then((x) => extractList(x, 'footprints')).catch((e) => {
+        failures.push({ stage: 'footprints', error: e.message });
+        return [];
+      }),
+    ]);
+    counts.footprints = footprints.length;
 
-    for (const fp of footprints || []) {
-      const footprintId = fp.id ?? fp.footprint_id;
-      const orderId = fp.order_id ?? fp.orderId ?? fp.id;
+    const idOf = (x) => x.order_id ?? x.orderId ?? x.id ?? x.orderID;
+    const withinWindow = (x) => {
+      const when = x.scheduled_start ?? x.inspection_date ?? x.date ?? x.start;
+      if (!when) return true;                       // no date on the stub — decide from the order
+      const days = (new Date(when) - Date.now()) / 86400000;
+      return days >= -Number(c.pull_window_days || 14) && days <= Number(c.pull_window_days || 14);
+    };
 
+    // one pass per order, whichever source named it
+    const work = new Map();
+    for (const o of everyOrder) if (withinWindow(o)) work.set(String(idOf(o)), null);
+    for (const fp of footprints) work.set(String(idOf(fp)), fp.id ?? fp.footprint_id ?? null);
+
+    for (const [orderId, footprintId] of work) {
       try {
         const order = await getOrder(orderId);
         const [client, agent] = await Promise.all([

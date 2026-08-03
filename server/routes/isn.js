@@ -3,7 +3,7 @@ import { Router } from 'express';
 import { q, tx } from '../lib/db.js';
 import { wrap, bad } from '../lib/http.js';
 import { requireAuth, requireRole } from '../lib/auth.js';
-import { syncOnce } from '../integrations/isn.js';
+import { syncOnce, probe, getMe, getUsers, extractList } from '../integrations/isn.js';
 
 const r = Router();
 
@@ -20,6 +20,104 @@ r.get('/status', requireAuth, wrap(async (_req, res) => {
     runs: runs.rows,
     radonOrdersWithoutSets: gaps.rows[0].n,
   });
+}));
+
+/**
+ * What ISN actually answers with.
+ *
+ * Field names and shapes only — an order carries a client's name, phone and
+ * address, and none of that is needed to work out which envelope is in use.
+ */
+r.get('/probe', requireAuth, requireRole('admin'), wrap(async (_req, res) => {
+  const probes = [];
+  for (const path of ['/me', '/users', '/orders', '/orders/footprints']) {
+    probes.push(await probe(path));
+  }
+  res.json({ probes });
+}));
+
+/**
+ * Who this ISN says works here.
+ *
+ * Deriving the roster from orders only ever finds people who already have
+ * work. /users is the actual list, so somebody hired last week can be given a
+ * login before their first job. Matching is by email, which is the one field
+ * both systems agree on; anything unmatched is offered rather than assumed.
+ */
+r.get('/roster', requireAuth, requireRole('admin'), wrap(async (_req, res) => {
+  const [me, users, staff] = await Promise.all([
+    getMe().catch((e) => ({ error: e.message })),
+    getUsers().then((x) => extractList(x, 'users')),
+    q(`SELECT id, full_name, email, job_title, isn_user_id FROM employees WHERE status = 'Active'`),
+  ]);
+
+  const byEmail = new Map(
+    staff.rows.filter((e) => e.email).map((e) => [e.email.toLowerCase(), e])
+  );
+  const byIsnId = new Map(staff.rows.filter((e) => e.isn_user_id).map((e) => [e.isn_user_id, e]));
+
+  const roster = users.map((u) => {
+    const isnId = String(u.id ?? u.user_id ?? u.userID ?? '');
+    const email = (u.email ?? u.email_address ?? '').toLowerCase() || null;
+    const name = u.name ?? [u.first_name, u.last_name].filter(Boolean).join(' ') ?? null;
+    const linked = byIsnId.get(isnId) || null;
+    const suggestion = !linked && email ? byEmail.get(email) || null : null;
+    return {
+      isn_user_id: isnId,
+      name: name || email || 'Unnamed',
+      email,
+      role: u.role ?? u.user_type ?? u.type ?? null,
+      inactive: u.active === false || u.status === 'inactive',
+      employee_id: linked?.id ?? null,
+      employee_name: linked?.full_name ?? null,
+      suggested_employee_id: suggestion?.id ?? null,
+      suggested_employee_name: suggestion?.full_name ?? null,
+    };
+  });
+
+  res.json({
+    keysBelongTo: me?.error ? null : (me?.name ?? me?.email ?? me?.user?.name ?? null),
+    meError: me?.error ?? null,
+    roster,
+    employees: staff.rows,
+    unlinked: roster.filter((x) => !x.employee_id && !x.inactive).length,
+  });
+}));
+
+/**
+ * Make an ISN user a person here.
+ *
+ * Creating the employee record is the point: an inspector needs to exist
+ * before they can hold a licence, drive a van or be given a login, and
+ * retyping what ISN already knows is how the two drift apart.
+ */
+r.post('/roster/adopt', requireAuth, requireRole('admin'), wrap(async (req, res) => {
+  const { isn_user_id, full_name, email, employee_id } = req.body || {};
+  if (!isn_user_id) throw bad('Which ISN user?');
+
+  const out = await tx(async (c) => {
+    let id = employee_id || null;
+
+    if (!id) {
+      if (!full_name?.trim()) throw bad('A person needs a name.');
+      const made = await c.query(
+        `INSERT INTO employees (full_name, email, role, status)
+         VALUES ($1, $2, 'Inspector', 'Active')
+         ON CONFLICT (email) DO UPDATE SET full_name = EXCLUDED.full_name
+         RETURNING id`,
+        [full_name.trim(), email || null]
+      );
+      id = made.rows[0].id;
+    }
+
+    await c.query(`UPDATE employees SET isn_user_id = NULL WHERE isn_user_id = $1`, [isn_user_id]);
+    await c.query(`UPDATE employees SET isn_user_id = $2 WHERE id = $1`, [id, isn_user_id]);
+    const touched = await c.query(
+      `UPDATE isn_orders SET employee_id = $2 WHERE inspector_isn_id = $1`, [isn_user_id, id]);
+    return { employeeId: id, ordersReassigned: touched.rowCount };
+  });
+
+  res.json({ ok: true, ...out });
 }));
 
 r.post('/sync', requireAuth, requireRole('office'), wrap(async (_req, res) => {

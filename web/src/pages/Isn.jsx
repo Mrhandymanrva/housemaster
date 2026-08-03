@@ -19,13 +19,37 @@ export default function Isn() {
   const [note, setNote] = useState(null);
   const [busy, setBusy] = useState(null);
   const [key, setKey] = useState('');
+  const [probe, setProbe] = useState(null);
+  const [people, setPeople] = useState(null);
+
+  const adopt = (u, employeeId) =>
+    run(u.isn_user_id, async () => {
+      const out = await api('/isn/roster/adopt', {
+        method: 'POST',
+        body: {
+          isn_user_id: u.isn_user_id,
+          employee_id: employeeId || null,
+          full_name: u.name,
+          email: u.email,
+        },
+      });
+      await load();
+      setNote(employeeId
+        ? `Linked. ${out.ordersReassigned} order${out.ordersReassigned === 1 ? '' : 's'} now theirs.`
+        : `${u.name} added to your staff and linked.`);
+    });
 
   const load = () =>
-    Promise.all([api('/isn/status'), api('/isn/inspectors').catch(() => null)])
-      .then(([s, i]) => {
+    Promise.all([
+      api('/isn/status'),
+      api('/isn/inspectors').catch(() => null),
+      api('/isn/roster').catch((e) => ({ error: e.message })),
+    ])
+      .then(([s, i, r]) => {
         setStatus(s);
         setKey(s.connection?.company_key || '');
         if (i) setRoster(i);
+        setPeople(r);
       })
       .catch((e) => setErr(e.message));
 
@@ -143,10 +167,126 @@ export default function Isn() {
           {last?.error && (
             <div className="banner" style={{ marginTop: 16 }}>Last pull failed: {last.error}</div>
           )}
+
+          <div className="setting" style={{ marginTop: 16 }}>
+            <div style={{ minWidth: 0 }}>
+              <b>Check what ISN sends</b>
+              <span>
+                Asks for footprints and reports the field names and shape of the answer —
+                never the contents, because an order carries a client's name and address.
+                Useful when a pull fails and the reason is the shape of the reply.
+              </span>
+            </div>
+            <button className="btn" style={{ marginLeft: 'auto' }} disabled={busy === 'probe'}
+                    onClick={() => run('probe', async () => {
+                      const out = await api('/isn/probe');
+                      setProbe(out.probes);
+                    })}>
+              {busy === 'probe' ? <span className="spinner" /> : null} Check
+            </button>
+          </div>
+
+          {probe && (
+            <pre style={{
+              marginTop: 12, padding: 14, background: 'var(--surface-2)',
+              border: '1px solid var(--line)', borderRadius: 'var(--r-sm)',
+              fontSize: 12.5, fontFamily: 'var(--mono)', overflowX: 'auto', whiteSpace: 'pre-wrap',
+            }}>{JSON.stringify(probe, null, 2)}</pre>
+          )}
         </div>
       </div>
 
-      {/* ---------------------------------------------------- who is who */}
+      {/* ------------------------------------------------- the ISN roster */}
+      <div className="card">
+        <div className="card-head">
+          <div>
+            <h2>People on your ISN</h2>
+            <div className="sub">
+              {people?.keysBelongTo
+                ? <>The keys belong to <b>{people.keysBelongTo}</b>. Orders are pulled company-wide,
+                    so this is not limited to their own jobs.</>
+                : 'Straight from ISN, so somebody hired last week can be given a login before their first job.'}
+            </div>
+          </div>
+          {people?.unlinked > 0 && (
+            <span className="pill amber" style={{ marginLeft: 'auto' }}>
+              {people.unlinked} not set up here
+            </span>
+          )}
+        </div>
+
+        {people?.error ? (
+          <div className="card-body">
+            <div className="banner">Could not read the roster: {people.error}</div>
+          </div>
+        ) : !people?.roster?.length ? (
+          <div className="empty">
+            <h3>Nothing back from ISN yet</h3>
+            <p>Switch the link on, then this fills in from your ISN's own user list.</p>
+          </div>
+        ) : (
+          <div className="table-wrap">
+            <table className="data">
+              <thead>
+                <tr>
+                  <th>In ISN</th>
+                  <th style={{ width: 150 }}>Their role</th>
+                  <th style={{ width: 300 }}>Here</th>
+                </tr>
+              </thead>
+              <tbody>
+                {people.roster.map((u) => (
+                  <tr key={u.isn_user_id} style={{ cursor: 'default', opacity: u.inactive ? 0.5 : 1 }}>
+                    <td>
+                      <div style={{ color: 'var(--text)', fontWeight: 550 }}>{u.name}</div>
+                      <div style={{ fontSize: 12.5, color: 'var(--text-3)' }}>
+                        {u.email || u.isn_user_id}{u.inactive ? ' · inactive in ISN' : ''}
+                      </div>
+                    </td>
+                    <td style={{ fontSize: 13.5 }}>{u.role || '—'}</td>
+                    <td>
+                      {u.employee_id ? (
+                        <span className="pill green">{u.employee_name}</span>
+                      ) : (
+                        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                          <select
+                            className="input" style={{ flex: 1, minWidth: 150 }}
+                            defaultValue={u.suggested_employee_id || ''}
+                            disabled={busy === u.isn_user_id}
+                            onChange={(e) => adopt(u, e.target.value)}
+                          >
+                            <option value="">Choose someone…</option>
+                            {people.employees.map((e) => (
+                              <option key={e.id} value={e.id}>{e.full_name}</option>
+                            ))}
+                          </select>
+                          <button className="btn" style={{ width: 'auto' }}
+                                  disabled={busy === u.isn_user_id}
+                                  onClick={() => adopt(u, null)}>
+                            Add as new
+                          </button>
+                        </div>
+                      )}
+                      {!u.employee_id && u.suggested_employee_name && (
+                        <div style={{ fontSize: 12.5, color: 'var(--text-3)', marginTop: 4 }}>
+                          Same email as {u.suggested_employee_name}.
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        <div className="card-foot" style={{ fontSize: 13.5, color: 'var(--text-2)' }}>
+          Adding somebody creates their staff record and ties it to ISN in one step. Giving
+          them a password is separate, under <b>Logins</b> — being on the roster does not by
+          itself let anyone sign in.
+        </div>
+      </div>
+
+      {/* ------------------------------------- inspectors seen on orders */}
       <div className="card">
         <div className="card-head">
           <div>
