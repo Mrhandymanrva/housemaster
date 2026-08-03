@@ -1,0 +1,162 @@
+/* HouseMaster Field — phone. Same palette as the desktop, sized for a thumb
+   in a driveway: nothing below 44px, nothing that needs a second hand. */
+:root {
+  --bg: #F1F4F8; --surface: #FFFFFF; --surface-2: #F7F9FC; --surface-3: #EDF1F6;
+  --line: #E1E7EF; --line-2: #CFD8E3;
+  --text: #16202C; --text-2: #56657A; --text-3: #8A97A8;
+  --red: #D33A2C; --red-bg: #FDECEA;
+  --amber: #B06A00; --amber-bg: #FFF3DE;
+  --green: #1B7F55; --green-bg: #E6F6EF;
+  --blue: #2A6BB0; --blue-bg: #E9F1FB;
+  --r: 14px; --r-sm: 10px;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+}
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body { margin: 0; padding: 0; }
+body {
+  background: var(--bg); color: var(--text);
+  font: 16px/1.45 'Inter', system-ui, -apple-system, sans-serif;
+  padding-bottom: var(--safe-bottom);
+  overscroll-behavior-y: contain;
+}
+.loading { padding: 80px 20px; text-align: center; color: var(--text-2); }
+
+/* ---------------------------------------------------------------- chrome */
+.top {
+  position: sticky; top: 0; z-index: 20;
+  background: var(--surface); border-bottom: 1px solid var(--line);
+  padding: calc(var(--safe-top) + 12px) 16px 12px;
+  display: flex; align-items: center; gap: 12px;
+}
+.top h1 { font-size: 18px; margin: 0; font-weight: 650; flex: 1; min-width: 0;
+          overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mark {
+  width: 34px; height: 34px; border-radius: 9px; flex: 0 0 34px;
+  background: var(--red); color: #fff; display: grid; place-items: center;
+  font-weight: 700; font-size: 13px; letter-spacing: .3px;
+}
+.back {
+  border: 0; background: none; color: var(--blue); font-size: 16px;
+  padding: 8px 4px 8px 0; font-weight: 550; min-height: 44px;
+}
+.wrap { padding: 16px; max-width: 640px; margin: 0 auto; }
+
+/* --------------------------------------------------------------- offline */
+.offline-bar {
+  background: var(--text); color: #fff; text-align: center;
+  font-size: 13.5px; padding: 7px 12px;
+}
+.queued {
+  background: var(--blue-bg); color: #1E4E80; border-radius: var(--r-sm);
+  padding: 11px 14px; font-size: 14px; margin-bottom: 14px;
+}
+
+/* ------------------------------------------------------------- reminders */
+.reminders { margin-bottom: 20px; }
+.rem {
+  display: flex; gap: 12px; align-items: flex-start;
+  background: var(--surface); border: 1px solid var(--line);
+  border-left: 4px solid var(--line-2);
+  border-radius: var(--r-sm); padding: 13px 14px; margin-bottom: 9px;
+}
+.rem.overdue { border-left-color: var(--red); background: var(--red-bg); }
+.rem.soon    { border-left-color: var(--amber); background: var(--amber-bg); }
+.rem .what { flex: 1; min-width: 0; }
+.rem .title { font-weight: 600; font-size: 15px; }
+.rem .sub { font-size: 13px; color: var(--text-2); margin-top: 2px; }
+.rem .when { font-size: 13px; font-weight: 650; white-space: nowrap; }
+.rem.overdue .when { color: #8E251A; }
+.rem.soon .when { color: var(--amber); }
+
+.section-label {
+  font-size: 12.5px; font-weight: 650; letter-spacing: .5px;
+  text-transform: uppercase; color: var(--text-3); margin: 22px 2px 10px;
+}
+
+/* ----------------------------------------------------------------- tiles */
+.tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 11px; }
+.tile {
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--r);
+  padding: 16px 14px; text-align: left; min-height: 104px;
+  display: flex; flex-direction: column; gap: 5px; font: inherit; color: inherit;
+}
+.tile:active { background: var(--surface-2); }
+.tile .dot { width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center;
+             font-size: 16px; margin-bottom: 3px; }
+.tile .name { font-weight: 650; font-size: 15.5px; }
+.tile .desc { font-size: 12.5px; color: var(--text-2); line-height: 1.35; }
+.accent-steel .dot { background: var(--blue-bg); }
+.accent-red .dot   { background: var(--red-bg); }
+.accent-amber .dot { background: var(--amber-bg); }
+.accent-green .dot { background: var(--green-bg); }
+
+/* ------------------------------------------------------------------ form */
+.field { margin-bottom: 18px; }
+.field label { display: block; font-weight: 600; font-size: 15px; margin-bottom: 6px; }
+.field .need { color: var(--red); font-weight: 500; font-size: 13px; }
+.field .help { font-size: 13px; color: var(--text-2); margin-top: 5px; }
+input, select, textarea {
+  width: 100%; font: inherit; color: var(--text);
+  background: var(--surface); border: 1px solid var(--line-2);
+  border-radius: var(--r-sm); padding: 12px 13px; min-height: 48px;
+}
+textarea { min-height: 92px; resize: vertical; }
+input:focus, select:focus, textarea:focus {
+  outline: none; border-color: var(--blue); box-shadow: 0 0 0 3px var(--blue-bg);
+}
+.toggle {
+  display: flex; align-items: center; gap: 12px;
+  background: var(--surface); border: 1px solid var(--line-2);
+  border-radius: var(--r-sm); padding: 12px 13px; min-height: 48px; width: 100%;
+  font: inherit; color: inherit; text-align: left;
+}
+.toggle i {
+  width: 46px; height: 28px; border-radius: 14px; background: var(--line-2);
+  position: relative; flex: 0 0 46px; transition: background .15s;
+}
+.toggle i::after {
+  content: ''; position: absolute; top: 3px; left: 3px; width: 22px; height: 22px;
+  border-radius: 50%; background: #fff; transition: transform .15s;
+}
+.toggle.on i { background: var(--green); }
+.toggle.on i::after { transform: translateX(18px); }
+.photo-btn {
+  border: 1px dashed var(--line-2); background: var(--surface-2);
+  border-radius: var(--r-sm); padding: 18px; width: 100%; font: inherit;
+  color: var(--text-2); min-height: 64px;
+}
+.shot { position: relative; margin-top: 8px; }
+.shot img { width: 100%; border-radius: var(--r-sm); display: block; }
+.shot button {
+  position: absolute; top: 8px; right: 8px; border: 0; border-radius: 8px;
+  background: rgba(0,0,0,.62); color: #fff; padding: 7px 11px; font: inherit; font-size: 13px;
+}
+
+/* --------------------------------------------------------------- buttons */
+.btn {
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  width: 100%; min-height: 52px; border-radius: var(--r-sm);
+  border: 1px solid var(--line-2); background: var(--surface);
+  font: inherit; font-weight: 600; color: var(--text);
+}
+.btn.primary { background: var(--red); border-color: var(--red); color: #fff; }
+.btn.primary:disabled { opacity: .5; }
+.btn:active { transform: translateY(1px); }
+.foot { position: sticky; bottom: 0; background: var(--bg);
+        padding: 12px 0 calc(var(--safe-bottom) + 12px); }
+
+.banner { background: var(--red-bg); color: #8E251A; padding: 12px 14px;
+          border-radius: var(--r-sm); font-size: 14.5px; margin-bottom: 14px; }
+.note   { background: var(--blue-bg); color: #1E4E80; padding: 12px 14px;
+          border-radius: var(--r-sm); font-size: 14.5px; margin-bottom: 14px; }
+.ok     { background: var(--green-bg); color: #14603F; padding: 12px 14px;
+          border-radius: var(--r-sm); font-size: 14.5px; margin-bottom: 14px; }
+.empty  { text-align: center; color: var(--text-2); padding: 40px 20px; }
+.muted  { color: var(--text-3); font-size: 13px; }
+
+/* ----------------------------------------------------------------- login */
+.login { max-width: 380px; margin: 0 auto; padding: 56px 20px 20px; }
+.login .mark { width: 52px; height: 52px; border-radius: 13px; font-size: 18px; margin: 0 auto 18px; }
+.login h1 { text-align: center; font-size: 21px; margin: 0 0 6px; }
+.login p  { text-align: center; color: var(--text-2); margin: 0 0 26px; font-size: 14.5px; }

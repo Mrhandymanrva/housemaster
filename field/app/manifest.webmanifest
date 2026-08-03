@@ -1,0 +1,16 @@
+{
+  "name": "HouseMaster Field",
+  "short_name": "HouseMaster",
+  "description": "Van checks, radon sets, service logs and what is due — for the tech.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#F1F4F8",
+  "theme_color": "#D33A2C",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

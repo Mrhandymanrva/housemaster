@@ -11,7 +11,16 @@ const when = (iso) => {
 };
 
 const label = (k) => k.replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase());
-const show = (v) => (typeof v === 'boolean' ? (v ? 'Yes' : 'No') : String(v));
+
+/* Photos ride in the payload inline, so show the photo rather than the several
+   thousand characters it is made of. */
+const show = (v) => {
+  if (typeof v === 'boolean') return v ? 'Yes' : 'No';
+  if (typeof v === 'string' && v.startsWith('data:image/')) {
+    return <img src={v} alt="" style={{ maxWidth: 280, borderRadius: 8, display: 'block' }} />;
+  }
+  return String(v);
+};
 
 export default function Inbox({ onCount }) {
   const [subs, setSubs] = useState(null);

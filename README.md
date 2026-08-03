@@ -139,9 +139,39 @@ docs/              schema decisions, field app guide
 
 ## The field app
 
+`field/app/` is the phone app, served by the same process at **`/phone`**. Plain
+browser JavaScript with no build step, because a tech's phone should get a
+change the moment it deploys.
+
+Getting it onto a phone: open `https://<your-host>/phone` and add it to the home
+screen — Safari → Share → Add to Home Screen on iOS, Chrome → Install app on
+Android. There is nothing in an app store. The address is also printed in the
+desktop app under **Phone app**.
+
+Signing in caches the modules, their questions, the dropdown choices and the
+vehicle and equipment pick-lists, so losing signal mid-form costs nothing.
+Submissions queue in the browser and go when service returns, each carrying a
+uuid the phone generated, so a retry cannot post twice.
+
+What a tech sees on the home screen, above the forms, is what is due against
+*them* — their licences, the van they drive, the equipment signed out to them —
+from `/api/ops/field/reminders`. The office keeps the whole horizon on the
+desktop; the phone shows the few things that stop somebody working today.
+
+A module whose submission names an existing record edits it: a van check puts
+the odometer on the van. One that names none creates a record instead — a van
+maintenance log becomes a new row in `vehicle_maintenance` rather than an edit
+to the van.
+
+Photos ride inside the submission, downscaled to 1024px JPEG on the phone. That
+is interim: `attachments` exists as a table and the object storage behind it
+does not, so photos live in the submission payload until it is wired.
+
 `field/qa-guard.js` is the duplicate rule as the phone runs it — a pure module
 with no imports, so the app, the service worker and the tests all share one copy.
-`node field/qa-guard.test.js` runs its 18 checks.
+`node field/qa-guard.test.js` runs its 18 checks. **It is not yet wired into
+`field/app/`** — the radon forms render and submit, but the phone does not
+enforce the duplicate pair. The API and the database still do.
 
 `field/prototype.html` opens in any browser and shows what the tech sees: the
 flagged tile, the red banner, the extra questions, and a send button that will
@@ -182,7 +212,8 @@ with and without it.
 
 ## Not built yet
 
-File upload storage (the `attachments` table is there, the S3/R2 wiring is not),
-CSV import, email and SMS reminders on the compliance calendar, and the phone
-client itself — the desktop configures it and the API accepts its submissions, so
-it can be a thin React Native or PWA shell over `/api/ops/field/*`.
+File upload storage (the `attachments` table is there, the S3/R2 wiring is not,
+so phone photos sit in the submission payload meanwhile), CSV import, email and
+SMS reminders on the compliance calendar, the duplicate-pair rule inside the
+phone app, and Setup → Screens for renaming and reordering columns — its
+endpoint is live and nothing calls it.

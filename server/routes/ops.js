@@ -80,10 +80,54 @@ r.get('/field/config', requireAuth, wrap(async (req, res) => {
        LEFT JOIN field_form_fields ff ON ff.form_id = f.id
       WHERE f.active GROUP BY f.id`
   );
+  // A select field stores the name of a list, not its contents. Resolve it here
+  // or the phone shows an empty picker with no way to know why.
+  const choices = (await q(
+    `SELECT list_key, value, label FROM lookup_values WHERE active ORDER BY list_key, sort, label`
+  )).rows;
+  const byList = {};
+  for (const c of choices) (byList[c.list_key] ||= []).push({ value: c.value, label: c.label });
+
   const byModule = {};
-  for (const f of forms.rows) byModule[f.module_id] = f;
+  for (const f of forms.rows) {
+    byModule[f.module_id] = {
+      ...f,
+      fields: (f.fields || []).map((ff) =>
+        ff.lookup_list ? { ...ff, options: byList[ff.lookup_list] || [] } : ff
+      ),
+    };
+  }
   res.json({
     modules: mods.rows.map((m) => ({ ...m, form: byModule[m.id] || null })),
+  });
+}));
+
+/**
+ * What this person is personally on the hook for — their licences, the van
+ * they drive, the equipment signed out to them.
+ *
+ * The office sees the whole horizon on the desktop. A tech standing at a van
+ * needs the few things that stop them working today, so this is filtered to
+ * them and cut off at a horizon they can act on.
+ */
+r.get('/field/reminders', requireAuth, wrap(async (req, res) => {
+  const days = Math.min(Number(req.query.days) || 60, 365);
+  if (!req.user.employee_id) return res.json({ reminders: [], overdue: 0, soon: 0 });
+
+  const { rows } = await q(
+    `SELECT h.id, h.category, h.title, h.subject, h.due_date, h.days_out, h.state, h.priority
+       FROM compliance_horizon h
+      WHERE h.responsible_id = $1
+        AND h.completed_date IS NULL
+        AND h.due_date <= CURRENT_DATE + $2::int
+      ORDER BY h.due_date`,
+    [req.user.employee_id, days]
+  );
+
+  res.json({
+    reminders: rows,
+    overdue: rows.filter((r0) => r0.days_out < 0).length,
+    soon: rows.filter((r0) => r0.days_out >= 0).length,
   });
 }));
 
@@ -194,7 +238,9 @@ async function applySubmission(id, userId) {
     if (!sub) throw notFound();
     if (sub.status === 'applied') return sub;
 
-    if (sub.target_entity && sub.target_id) {
+    let wroteTo = sub.target_id;
+
+    if (sub.target_entity) {
       const entity = await getEntity(sub.target_entity);
       const mapped = (await c.query(
         `SELECT key, maps_to_column FROM field_form_fields
@@ -203,19 +249,33 @@ async function applySubmission(id, userId) {
       )).rows;
 
       const valid = new Set(entity?.fields.map((f) => f.column_name) || []);
-      const sets = [];
+      const cols = [];
       const vals = [];
       for (const m of mapped) {
         if (!valid.has(m.maps_to_column)) continue;
-        if (sub.payload[m.key] === undefined) continue;
+        if (sub.payload[m.key] === undefined || sub.payload[m.key] === '') continue;
         vals.push(sub.payload[m.key]);
-        sets.push(`"${m.maps_to_column}" = $${vals.length}`);
+        cols.push(m.maps_to_column);
       }
-      if (sets.length) {
+
+      // A submission that names an existing record edits it — a van check puts
+      // the odometer on the van. One that names none is reporting something
+      // that happened, so it becomes a new record: a service visit, not an edit
+      // to the van.
+      if (cols.length && sub.target_id) {
+        const sets = cols.map((col, i) => `"${col}" = $${i + 1}`).join(', ');
         vals.push(sub.target_id);
         await c.query(
-          `UPDATE "${entity.table_name}" SET ${sets.join(', ')} WHERE id = $${vals.length}`, vals
+          `UPDATE "${entity.table_name}" SET ${sets} WHERE id = $${vals.length}`, vals
         );
+      } else if (cols.length) {
+        const names = cols.map((col) => `"${col}"`).join(', ');
+        const ph = cols.map((_, i) => `$${i + 1}`).join(', ');
+        const made = await c.query(
+          `INSERT INTO "${entity.table_name}" (${names}) VALUES (${ph}) RETURNING id`, vals
+        );
+        wroteTo = made.rows[0].id;
+        await c.query(`UPDATE field_submissions SET target_id = $2 WHERE id = $1`, [id, wroteTo]);
       }
     }
 
@@ -228,7 +288,7 @@ async function applySubmission(id, userId) {
     await c.query(
       `INSERT INTO audit_log (user_id, entity, entity_id, action, diff)
        VALUES ($1,$2,$3,'field_submit',$4)`,
-      [userId, sub.target_entity, sub.target_id, JSON.stringify(sub.payload)]
+      [userId, sub.target_entity, wroteTo, JSON.stringify(sub.payload)]
     );
     await c.query('SELECT refresh_compliance()');
     return out;

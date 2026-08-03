@@ -120,9 +120,44 @@ export default function FieldSetup() {
     } catch { /* demo mode does not write */ }
   };
 
+  const phoneUrl = `${window.location.origin}/phone`;
+
   return (
     <div className="studio">
       <div className="stack">
+        <div className="card">
+          <div className="card-head">
+            <div>
+              <h2>Getting it onto a phone</h2>
+              <div className="sub">
+                Nothing to install from a store. Open this address on the phone and add it
+                to the home screen — it opens full-screen like any other app.
+              </div>
+            </div>
+          </div>
+          <div className="card-body" style={{ paddingTop: 4 }}>
+            <div className="field" style={{ marginBottom: 12 }}>
+              <input className="input mono" readOnly value={phoneUrl}
+                     onFocus={(e) => e.target.select()} />
+            </div>
+            <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap', fontSize: 13.5, color: 'var(--text-2)' }}>
+              <div style={{ minWidth: 210, flex: 1 }}>
+                <b style={{ color: 'var(--text)' }}>iPhone</b>
+                <div>Safari → Share → Add to Home Screen. It has to be Safari; other
+                     browsers on iOS cannot add it.</div>
+              </div>
+              <div style={{ minWidth: 210, flex: 1 }}>
+                <b style={{ color: 'var(--text)' }}>Android</b>
+                <div>Chrome → menu → Install app, or take the prompt when it offers.</div>
+              </div>
+            </div>
+            <div style={{ marginTop: 14, fontSize: 13.5, color: 'var(--text-3)' }}>
+              They sign in with the same email and password as here, and see whatever is
+              switched on below.
+            </div>
+          </div>
+        </div>
+
         <div className="card">
           <div className="card-head">
             <div>

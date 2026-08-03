@@ -41,10 +41,26 @@ app.use('/api/radon', radonRoutes);
 app.use('/api/isn', isnRoutes);
 app.use('/api/records', recordRoutes);
 
+// ---------------------------------------------------------------- the phone
+// Served from the same origin as the API so the app has no CORS to negotiate
+// and no second host to configure. The service worker sits at /phone/sw.js,
+// which is what scopes it to /phone/ and nothing above it.
+const phone = path.join(__dirname, '..', 'field', 'app');
+app.use('/phone', express.static(phone, {
+  index: 'index.html',
+  setHeaders(res, filePath) {
+    // The worker and the manifest decide whether a phone ever sees a deploy,
+    // so they are always revalidated. Everything else the worker itself caches.
+    if (/sw\.js$|\.webmanifest$/.test(filePath)) res.setHeader('Cache-Control', 'no-cache');
+    else res.setHeader('Cache-Control', 'public, max-age=3600');
+  },
+}));
+app.get(/^\/phone(\/.*)?$/, (_req, res) => res.sendFile(path.join(phone, 'index.html')));
+
 // serve the built desktop app
 const web = path.join(__dirname, '..', 'web', 'dist');
 app.use(express.static(web, { maxAge: '1h', index: false }));
-app.get(/^(?!\/api).*/, (_req, res) => res.sendFile(path.join(web, 'index.html')));
+app.get(/^(?!\/api|\/phone).*/, (_req, res) => res.sendFile(path.join(web, 'index.html')));
 
 app.use((err, _req, res, _next) => {
   const status = err.status || 500;
