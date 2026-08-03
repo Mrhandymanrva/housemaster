@@ -95,14 +95,18 @@ export async function createRadonSet(c, b) {
 /**
  * Translate a phone submission into that shape.
  *
- * The photo stays where it already is — in the submission payload — and the
- * custody event points at it. When object storage exists, this is the one line
- * that changes; until then a chain-of-custody record that says where the photo
- * lives beats one that pretends there is none.
+ * Photos have already been filed by the time this runs, so the payload holds a
+ * reference and the custody event stores it verbatim. Anything else — a stray
+ * data URL from a submission that skipped that step — is refused rather than
+ * written, because a custody record pointing at something unresolvable is
+ * worse than one admitting it has no photo.
  */
 export function radonSetFromSubmission(sub, payload = {}) {
   const qa = payload._qa || {};
-  const ref = (key) => (payload[key] ? `field_submission:${sub.id}#${key}` : null);
+  const ref = (key) => {
+    const v = payload[key];
+    return typeof v === 'string' && v.startsWith('attachment:') ? v : null;
+  };
 
   return {
     property_address: payload.address || payload.property_address || 'Address not recorded',

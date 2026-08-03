@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../lib/api.js';
 import Icon from '../components/Icons.jsx';
+import Attachment from '../components/Attachment.jsx';
 
 const when = (iso) => {
   const mins = Math.round((Date.now() - new Date(iso)) / 60000);
@@ -12,15 +13,22 @@ const when = (iso) => {
 
 const label = (k) => k.replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase());
 
-/* Photos ride in the payload inline, so show the photo rather than the several
-   thousand characters it is made of. */
+/* A photo is a reference to something on file. A submission that has not been
+   filed yet still holds the image itself, so show that too rather than several
+   thousand characters of base64. */
 const show = (v) => {
   if (typeof v === 'boolean') return v ? 'Yes' : 'No';
+  if (typeof v === 'string' && v.startsWith('attachment:')) {
+    return <Attachment id={v.slice('attachment:'.length)} />;
+  }
   if (typeof v === 'string' && v.startsWith('data:image/')) {
     return <img src={v} alt="" style={{ maxWidth: 280, borderRadius: 8, display: 'block' }} />;
   }
   return String(v);
 };
+
+/* The QA block the phone attaches is machinery, not an answer to a question. */
+const isAnswer = ([k]) => !k.startsWith('_');
 
 export default function Inbox({ onCount }) {
   const [subs, setSubs] = useState(null);
@@ -76,7 +84,7 @@ export default function Inbox({ onCount }) {
           <div className="table-wrap">
             <table className="data">
               <tbody>
-                {Object.entries(s.payload).map(([k, v]) => (
+                {Object.entries(s.payload).filter(isAnswer).map(([k, v]) => (
                   <tr key={k} style={{ cursor: 'default' }}>
                     <td style={{ width: 260 }}>{label(k)}</td>
                     <td style={{ color: 'var(--text)' }}>{show(v)}</td>

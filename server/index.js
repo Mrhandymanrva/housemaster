@@ -11,6 +11,7 @@ import { secretIsPlaceholder } from './lib/auth.js';
 import { syncCatalog } from './catalog/sync.js';
 import authRoutes from './routes/auth.js';
 import userRoutes from './routes/users.js';
+import attachmentRoutes from './routes/attachments.js';
 import recordRoutes from './routes/records.js';
 import opsRoutes from './routes/ops.js';
 import radonRoutes from './routes/radon.js';
@@ -23,7 +24,9 @@ app.disable('x-powered-by');
 app.use(helmet({ contentSecurityPolicy: false }));
 app.use(compression());
 app.use(cors({ origin: process.env.CORS_ORIGIN || true }));
-app.use(express.json({ limit: '2mb' }));
+// A submission can carry several photos, base64'd, and they are extracted into
+// attachments the moment it lands. 2mb turned a three-photo radon set away.
+app.use(express.json({ limit: '12mb' }));
 
 app.get('/api/health', async (_req, res) => {
   try {
@@ -36,6 +39,7 @@ app.get('/api/health', async (_req, res) => {
 
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
+app.use('/api/attachments', attachmentRoutes);
 app.use('/api/ops', opsRoutes);
 app.use('/api/radon', radonRoutes);
 app.use('/api/isn', isnRoutes);

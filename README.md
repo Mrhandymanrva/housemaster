@@ -242,12 +242,22 @@ with and without it.
 
 ## Not built yet
 
-File upload storage (the `attachments` table is there, the S3/R2 wiring is not,
-so phone photos sit in the submission payload meanwhile), CSV import, email and
-SMS reminders on the compliance calendar, and Setup → Screens for renaming and
-reordering columns — its endpoint is live and nothing calls it.
+Object storage — photos are filed properly but the bytes are in Postgres, which
+does not scale to years of them. Uploading a document from the desktop, as
+opposed to a photo from a phone. CSV import. Email and SMS reminders on the
+compliance calendar. And Setup → Screens for renaming and reordering columns —
+its endpoint is live and nothing calls it.
 
-Photos are the open one: a radon set opened from a phone records where its
-photos live (`field_submission:<id>#placement_photo`) rather than a file,
-because there is no file store to put them in yet. Wiring object storage is one
-line in `radonIntake.js` and a migration to rewrite the existing refs.
+Photos are stored, not embedded. A submission arrives with images inline and
+they are filed the moment it lands: a row in `attachments` with a size, a
+sha256 and an uploader, the bytes in `attachment_blobs`, and a reference —
+`attachment:<uuid>` — left where the image was. The custody event points at
+that row, and the photos are re-filed against the record the submission became,
+so they show up on the radon set rather than only on the paperwork.
+
+The bytes are in Postgres because it is the only thing on this deployment with
+a volume behind it, and adding an object store means credentials nobody has
+issued yet. That is a real tradeoff: fine for a few hundred kilobytes a set,
+wrong for several years of them. `storage_key` keeps its meaning for the day it
+moves — `db:<id>` now, an object key later — and the bytes sit in their own
+table so no ordinary query drags an image along by accident.

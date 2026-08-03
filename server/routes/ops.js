@@ -4,6 +4,7 @@ import { wrap, bad, notFound } from '../lib/http.js';
 import { requireAuth, requireRole } from '../lib/auth.js';
 import { getEntity, bustCatalog } from '../catalog/sync.js';
 import { createRadonSet, radonSetFromSubmission } from '../radonIntake.js';
+import { absorbPayloadImages, relinkAttachments } from '../attachments.js';
 
 /**
  * Some records are more than a row.
@@ -268,6 +269,10 @@ async function applySubmission(id, userId) {
     if (!sub) throw notFound();
     if (sub.status === 'applied') return sub;
 
+    // File the photos first. Everything below reads the payload, and what it
+    // should find there is a reference to a stored image, not the image.
+    sub.payload = await absorbPayloadImages(c, sub);
+
     let wroteTo = sub.target_id;
 
     const build = INTAKE[sub.target_entity];
@@ -324,6 +329,10 @@ async function applySubmission(id, userId) {
        VALUES ($1,$2,$3,'field_submit',$4)`,
       [userId, sub.target_entity, wroteTo, JSON.stringify(sub.payload)]
     );
+    // The photos belong to the record now, not to the paperwork that made it,
+    // so they appear on the radon set or the vehicle rather than only here.
+    await relinkAttachments(c, id, sub.target_entity, wroteTo);
+
     await c.query('SELECT refresh_compliance()');
     // A set opened from a phone has its own dates to keep — closed-house hours,
     // retrieval due — and the desktop route refreshes these for the same reason.

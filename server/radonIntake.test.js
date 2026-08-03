@@ -19,7 +19,7 @@ const ordinary = {
   primary_device: 'eq-1',
   address: '19 Cary St',
   placement_floor: 'Basement',
-  placement_photo: 'data:image/jpeg;base64,AAAA',
+  placement_photo: 'attachment:11111111-1111-1111-1111-111111111111',
   closed_house_confirmed: true,
   notes: 'Sump pit sealed.',
   _qa: {
@@ -53,10 +53,15 @@ t('no duplicate on an ordinary set', () => {
 t('a set placed with signal is marked as such', () => {
   assert.equal(radonSetFromSubmission(sub, ordinary).source, 'field_online');
 });
-t('the photo is pointed at, not copied', () => {
+t('the custody event points at the filed photo', () => {
   const b = radonSetFromSubmission(sub, ordinary);
-  assert.equal(b.primary.photo_ref, 'field_submission:sub-1#placement_photo');
-  assert.ok(!b.primary.photo_ref.includes('base64'), 'the image itself stays in the payload');
+  assert.equal(b.primary.photo_ref, 'attachment:11111111-1111-1111-1111-111111111111');
+});
+t('a photo that was never filed is refused, not written', () => {
+  // A data URL here means something skipped the step that stores images. A
+  // custody record pointing at an unresolvable blob is worse than one with none.
+  const b = radonSetFromSubmission(sub, { ...ordinary, placement_photo: 'data:image/jpeg;base64,AAAA' });
+  assert.equal(b.primary.photo_ref, null);
 });
 
 console.log('\na QA set');
@@ -65,7 +70,7 @@ const qaSet = {
   duplicate_device: 'eq-2',
   duplicate_distance: 4,
   duplicate_seal: 'TS-991',
-  duplicate_photo: 'data:image/jpeg;base64,BBBB',
+  duplicate_photo: 'attachment:22222222-2222-2222-2222-222222222222',
   _qa: { ...ordinary._qa, believed_sequence: 10, duplicate_required: true, duplicate_placed: true },
 };
 t('the second monitor becomes the duplicate', () => {
@@ -76,7 +81,7 @@ t('the second monitor becomes the duplicate', () => {
 });
 t('the pair photo is pointed at too', () => {
   assert.equal(radonSetFromSubmission(sub, qaSet).duplicate.photo_ref,
-    'field_submission:sub-1#duplicate_photo');
+    'attachment:22222222-2222-2222-2222-222222222222');
 });
 t('both monitors are recorded on the same floor', () => {
   const b = radonSetFromSubmission(sub, qaSet);
