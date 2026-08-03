@@ -20,6 +20,7 @@ const LS = {
   options: 'hm_field_options',
   ledger: 'hm_field_ledger',
   today: 'hm_field_today',
+  scope: 'hm_field_scope',
   queue: 'hm_field_queue',
   device: 'hm_field_device',
 };
@@ -37,6 +38,7 @@ const state = {
   options: read(LS.options, {}),
   ledger: read(LS.ledger, []),
   today: read(LS.today, null),
+  scope: localStorage.getItem('hm_field_scope') || null,
   route: { name: 'home' },
   draft: {},
   busy: false,
@@ -104,7 +106,7 @@ async function refresh() {
     api('/ops/field/config'),
     api('/ops/field/reminders'),
     api('/radon/ledger'),
-    api('/ops/field/today'),
+    api(`/ops/field/today${state.scope === 'me' ? '?scope=me' : ''}`),
   ]);
   if (day.status === 'fulfilled') {
     state.today = day.value;
@@ -304,8 +306,37 @@ function countBlock() {
     return wrapper;
   };
 
-  box.append(row('Today', t.today));
-  box.append(row('This week', t.week));
+  box.append(row(t.scope === 'branch' ? 'Today — everyone' : 'Today', t.today));
+  box.append(row(t.scope === 'branch' ? 'This week — everyone' : 'This week', t.week));
+
+  // Who did what. Only an owner sees this, and only when looking at the branch
+  // rather than at themselves.
+  if (t.scope === 'branch' && t.crew?.length) {
+    box.append(el('<div class="section-label">By inspector, this week</div>'));
+    const list = el('<div></div>');
+    for (const p of t.crew) {
+      list.append(el(`
+        <div class="crew">
+          <div class="who">${esc(p.name)}</div>
+          <div class="tally">
+            <b>${p.jobsWeek}</b><span>jobs</span>
+            <b>${p.radonWeek}</b><span>radon</span>
+          </div>
+        </div>`));
+    }
+    box.append(list);
+  }
+
+  if (t.maySeeAll) {
+    const toggle = el(`<button class="btn" style="margin-top:14px">${
+      t.scope === 'branch' ? 'Just my own' : 'Show everyone'}</button>`);
+    toggle.onclick = () => {
+      state.scope = t.scope === 'branch' ? 'me' : 'branch';
+      write(LS.scope, state.scope);
+      refresh().catch(() => {});
+    };
+    box.append(toggle);
+  }
 
   // Radon comes from our own sets and is always true. The rest is ISN's, and
   // a confident zero from a link that is switched off would be a lie.

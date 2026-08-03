@@ -153,16 +153,30 @@ r.get('/field/reminders', requireAuth, wrap(async (req, res) => {
 const ZONE = 'America/New_York';
 
 /**
- * ISN spells its services however the office set them up, so match loosely —
- * the same approach as hasRadon() in the ISN integration.
+ * How each job type is recognised. ISN spells its services however the office
+ * set them up, so match loosely — the same approach as hasRadon().
+ *
+ * Knowing how to spot a sewer scope is a fact about the trade and belongs in
+ * code. Whether Richmond sells one is a fact about the business, and lives in
+ * the `job_kind` list where the office can switch it on the day they start.
  */
-const JOB_KINDS = [
-  { key: 'mold', label: 'Mold', patterns: ['mold', 'air quality', 'iaq'] },
-  { key: 'sewer', label: 'Sewer scopes', patterns: ['sewer', 'scope'] },
-  { key: 'termite', label: 'Termite', patterns: ['termite', 'wdi', 'wood destroying'] },
-  { key: 'well_septic', label: 'Well & septic', patterns: ['well', 'septic', 'water test'] },
-  { key: 'pool', label: 'Pool & spa', patterns: ['pool', 'spa'] },
-];
+const JOB_PATTERNS = {
+  mold: ['mold', 'air quality', 'iaq'],
+  sewer: ['sewer', 'scope'],
+  termite: ['termite', 'wdi', 'wood destroying'],
+  well_septic: ['well', 'septic', 'water test'],
+  pool: ['pool', 'spa'],
+};
+
+async function jobKinds() {
+  const { rows } = await q(
+    `SELECT value, label FROM lookup_values
+      WHERE list_key = 'job_kind' AND active ORDER BY sort, label`
+  );
+  return rows
+    .filter((r) => JOB_PATTERNS[r.value])
+    .map((r) => ({ key: r.value, label: r.label, patterns: JOB_PATTERNS[r.value] }));
+}
 
 /**
  * The screen an inspector opens first thing.
@@ -175,56 +189,84 @@ const JOB_KINDS = [
 r.get('/field/today', requireAuth, wrap(async (req, res) => {
   const employeeId = req.user.employee_id || null;
 
-  // Only the column aliases are written into the SQL, and those are constants
-  // in this file. The patterns themselves go across as parameters like every
-  // other value in this codebase.
-  const kindCounts = JOB_KINDS
-    .map((k, i) => `COUNT(*) FILTER (WHERE o.services::text ILIKE ANY($${i + 3})) AS ${k.key}`)
-    .join(',\n           ');
-  const kindParams = JOB_KINDS.map((k) => k.patterns.map((p) => `%${p}%`));
+  // An owner runs the branch, so their phone shows the branch: everyone's
+  // work, everyone's deadlines, and who did what today. ?scope=me narrows it
+  // back to their own.
+  const maySeeAll = ['owner', 'admin'].includes(req.user.role);
+  const seeAll = maySeeAll && req.query.scope !== 'me';
+  const who = seeAll ? null : employeeId;
 
-  const [deadlines, ceu, sets, jobs, isn] = await Promise.all([
-    employeeId
-      ? q(`SELECT id, category, title, subject, due_date, days_out, state, priority
-             FROM compliance_horizon
-            WHERE responsible_id = $1 AND completed_date IS NULL
-              AND due_date <= CURRENT_DATE + 90
-            ORDER BY due_date`, [employeeId])
-      : { rows: [] },
+  const KINDS = await jobKinds();
+  // Only the column aliases are written into the SQL, and those come from a
+  // fixed set in this file. The patterns go across as parameters like every
+  // other value in this codebase.
+  const kindCounts = KINDS
+    .map((k, i) => `COUNT(*) FILTER (WHERE o.services::text ILIKE ANY($${i + 3})) AS ${k.key}`)
+    .join(', ');
+  const kindParams = KINDS.map((k) => k.patterns.map((p) => `%${p}%`));
+
+  const nobody = !seeAll && !employeeId;
+
+  const [deadlines, ceu, sets, jobs, isn, byPerson, radonByPerson] = await Promise.all([
+    nobody ? { rows: [] } : q(
+      `SELECT id, category, title, subject, due_date, days_out, state, priority, responsible_name
+         FROM compliance_horizon
+        WHERE completed_date IS NULL
+          AND due_date <= CURRENT_DATE + 90
+          AND ($1::uuid IS NULL OR responsible_id = $1)
+        ORDER BY due_date LIMIT 60`, [who]),
 
     employeeId
       ? q(`SELECT ceu_hours_required::float AS required,
-                  ceu_hours_completed::float AS completed,
-                  licenses_expired, licenses_due_60
+                  ceu_hours_completed::float AS completed
              FROM inspector_readiness WHERE employee_id = $1`, [employeeId])
       : { rows: [] },
 
     // Our own record of what went out, so this number never depends on ISN.
-    employeeId
-      ? q(`SELECT
-             COUNT(*) FILTER (WHERE (deployed_at AT TIME ZONE $2)::date = (now() AT TIME ZONE $2)::date) AS day,
-             COUNT(*) FILTER (WHERE deployed_at >= date_trunc('week', now() AT TIME ZONE $2)) AS week
-           FROM radon_tests WHERE inspector_id = $1 AND deployed_at IS NOT NULL`,
-        [employeeId, ZONE])
-      : { rows: [{ day: 0, week: 0 }] },
+    nobody ? { rows: [{ day: 0, week: 0 }] } : q(
+      `SELECT
+         COUNT(*) FILTER (WHERE (deployed_at AT TIME ZONE $2)::date = (now() AT TIME ZONE $2)::date) AS day,
+         COUNT(*) FILTER (WHERE deployed_at >= date_trunc('week', now() AT TIME ZONE $2)) AS week
+       FROM radon_tests
+      WHERE deployed_at IS NOT NULL AND ($1::uuid IS NULL OR inspector_id = $1)`,
+      [who, ZONE]),
 
-    employeeId
-      ? q(`SELECT
-             CASE WHEN (o.scheduled_start AT TIME ZONE $2)::date = (now() AT TIME ZONE $2)::date
-                  THEN 'day' ELSE 'week' END AS bucket,
-             COUNT(*) AS inspections,
-             ${kindCounts}
-           FROM isn_orders o
-           WHERE o.employee_id = $1
-             AND o.scheduled_start >= date_trunc('week', now() AT TIME ZONE $2)
-           GROUP BY 1`, [employeeId, ZONE, ...kindParams])
-      : { rows: [] },
+    nobody ? { rows: [] } : q(
+      `SELECT
+         CASE WHEN (o.scheduled_start AT TIME ZONE $2)::date = (now() AT TIME ZONE $2)::date
+              THEN 'day' ELSE 'week' END AS bucket,
+         COUNT(*) AS inspections${kindCounts ? ', ' + kindCounts : ''}
+       FROM isn_orders o
+      WHERE ($1::uuid IS NULL OR o.employee_id = $1)
+        AND o.scheduled_start >= date_trunc('week', now() AT TIME ZONE $2)
+        AND o.order_status <> 'Canceled'
+      GROUP BY 1`, [who, ZONE, ...kindParams]),
 
     q(`SELECT enabled, last_sync_at FROM isn_connection LIMIT 1`),
+
+    // Who did what — only worth asking when looking at the whole branch.
+    seeAll ? q(
+      `SELECT e.id, e.full_name,
+              COUNT(*) FILTER (WHERE (o.scheduled_start AT TIME ZONE $1)::date
+                                     = (now() AT TIME ZONE $1)::date)::int AS day,
+              COUNT(*)::int AS week
+         FROM isn_orders o JOIN employees e ON e.id = o.employee_id
+        WHERE o.scheduled_start >= date_trunc('week', now() AT TIME ZONE $1)
+          AND o.order_status <> 'Canceled'
+        GROUP BY e.id, e.full_name`, [ZONE]) : { rows: [] },
+
+    seeAll ? q(
+      `SELECT e.id, e.full_name,
+              COUNT(*) FILTER (WHERE (t.deployed_at AT TIME ZONE $1)::date
+                                     = (now() AT TIME ZONE $1)::date)::int AS day,
+              COUNT(*)::int AS week
+         FROM radon_tests t JOIN employees e ON e.id = t.inspector_id
+        WHERE t.deployed_at >= date_trunc('week', now() AT TIME ZONE $1)
+        GROUP BY e.id, e.full_name`, [ZONE]) : { rows: [] },
   ]);
 
-  // "This week" includes today; the query buckets them apart so add them back.
-  const zero = () => ({ inspections: 0, ...Object.fromEntries(JOB_KINDS.map((k) => [k.key, 0])) });
+  // "This week" includes today; the query buckets them apart, so add them back.
+  const zero = () => ({ inspections: 0, ...Object.fromEntries(KINDS.map((k) => [k.key, 0])) });
   const day = zero();
   const week = zero();
   for (const row of jobs.rows) {
@@ -235,9 +277,24 @@ r.get('/field/today', requireAuth, wrap(async (req, res) => {
     }
   }
 
+  // One row per person, jobs and radon side by side.
+  const crew = new Map();
+  const put = (rows, field) => {
+    for (const r0 of rows) {
+      const e = crew.get(r0.id) || { id: r0.id, name: r0.full_name, jobsDay: 0, jobsWeek: 0, radonDay: 0, radonWeek: 0 };
+      e[`${field}Day`] = r0.day;
+      e[`${field}Week`] = r0.week;
+      crew.set(r0.id, e);
+    }
+  };
+  put(byPerson.rows, 'jobs');
+  put(radonByPerson.rows, 'radon');
+
   const readiness = ceu.rows[0] || null;
   res.json({
     linked: Boolean(employeeId),
+    scope: seeAll ? 'branch' : 'me',
+    maySeeAll,
     deadlines: deadlines.rows,
     ceu: readiness && Number(readiness.required) > 0
       ? {
@@ -248,7 +305,8 @@ r.get('/field/today', requireAuth, wrap(async (req, res) => {
       : null,
     today: { ...day, radon: Number(sets.rows[0]?.day || 0) },
     week: { ...week, radon: Number(sets.rows[0]?.week || 0) },
-    kinds: JOB_KINDS.map(({ key, label }) => ({ key, label })),
+    kinds: KINDS.map(({ key, label }) => ({ key, label })),
+    crew: [...crew.values()].sort((a, b) => (b.jobsWeek + b.radonWeek) - (a.jobsWeek + a.radonWeek)),
     isn: { connected: Boolean(isn.rows[0]?.enabled), lastSyncAt: isn.rows[0]?.last_sync_at || null },
   });
 }));
