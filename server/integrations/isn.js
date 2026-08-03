@@ -214,6 +214,83 @@ export const getMe = () => call('/me');
 /** Every user on the ISN — inspectors, office, owners. */
 export const getUsers = () => call('/users');
 
+/**
+ * Refresh the local copy of the ISN user list.
+ *
+ * /users answers with stubs — id, show, modified — so every name, email and
+ * inspector flag costs its own call. Anyone whose `modified` has not moved
+ * since we last read them is skipped, which makes the second refresh cheap
+ * even when the first one is 250 calls.
+ */
+export async function refreshUsers({ force = false, concurrency = 6 } = {}) {
+  const stubs = extractList(await getUsers(), 'users');
+
+  const known = new Map(
+    (await q(`SELECT isn_user_id, isn_modified, detail_pulled_at FROM isn_users`)).rows
+      .map((r) => [r.isn_user_id, r])
+  );
+
+  const seen = [];
+  const wanted = [];
+  for (const s of stubs) {
+    const id = String(s.id ?? '');
+    if (!id) continue;
+    seen.push(id);
+    const mine = known.get(id);
+    const unchanged = mine?.detail_pulled_at
+      && String(mine.isn_modified?.toISOString?.() ?? mine.isn_modified ?? '') === String(s.modified ?? '');
+    if (force || !unchanged) wanted.push({ id, modified: s.modified ?? null, visible: s.show !== false });
+  }
+
+  let pulled = 0;
+  const failures = [];
+  for (let i = 0; i < wanted.length; i += concurrency) {
+    const batch = wanted.slice(i, i + concurrency);
+    await Promise.all(batch.map(async (w) => {
+      let u = null;
+      try {
+        u = unwrap(await getUser(w.id), 'user');
+      } catch (err) {
+        failures.push({ id: w.id, error: String(err.message || err).slice(0, 200) });
+      }
+      await q(
+        `INSERT INTO isn_users
+           (isn_user_id, display_name, first_name, last_name, email, phone,
+            is_inspector, is_owner, office, visible, isn_modified, detail_pulled_at, raw, last_seen_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb, now())
+         ON CONFLICT (isn_user_id) DO UPDATE SET
+           display_name = EXCLUDED.display_name, first_name = EXCLUDED.first_name,
+           last_name = EXCLUDED.last_name, email = EXCLUDED.email, phone = EXCLUDED.phone,
+           is_inspector = EXCLUDED.is_inspector, is_owner = EXCLUDED.is_owner,
+           office = EXCLUDED.office, visible = EXCLUDED.visible,
+           isn_modified = EXCLUDED.isn_modified,
+           detail_pulled_at = COALESCE(EXCLUDED.detail_pulled_at, isn_users.detail_pulled_at),
+           raw = COALESCE(EXCLUDED.raw, isn_users.raw),
+           last_seen_at = now()`,
+        [
+          w.id,
+          u ? (u.displayname || [u.firstname, u.lastname].filter(Boolean).join(' ') || null) : null,
+          u?.firstname ?? null, u?.lastname ?? null,
+          u?.emailaddress ?? null, u?.mobile ?? u?.phone ?? null,
+          !!u?.inspector, !!u?.owner, u?.office ?? null,
+          w.visible, w.modified || null,
+          u ? new Date() : null,
+          u ? JSON.stringify(u) : null,
+        ]
+      );
+      if (u) pulled += 1;
+    }));
+  }
+
+  // Anyone ISN no longer lists is hidden rather than deleted — an order from
+  // last month may still point at them.
+  if (seen.length) {
+    await q(`UPDATE isn_users SET visible = false WHERE isn_user_id <> ALL($1::text[])`, [seen]);
+  }
+
+  return { listed: stubs.length, detailed: pulled, skipped: stubs.length - wanted.length, failures };
+}
+
 /** ISN unwraps most things into { status, <name>: … }. */
 export const unwrap = (payload, key) =>
   (payload && typeof payload === 'object' && payload[key] !== undefined ? payload[key] : payload);

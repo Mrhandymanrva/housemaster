@@ -3,7 +3,7 @@ import { Router } from 'express';
 import { q, tx } from '../lib/db.js';
 import { wrap, bad } from '../lib/http.js';
 import { requireAuth, requireRole } from '../lib/auth.js';
-import { syncOnce, probe, getMe, getUsers, extractList, unwrap } from '../integrations/isn.js';
+import { syncOnce, probe, getMe, extractList, unwrap, refreshUsers } from '../integrations/isn.js';
 
 const r = Router();
 
@@ -44,48 +44,74 @@ r.get('/probe', requireAuth, requireRole('admin'), wrap(async (_req, res) => {
  * login before their first job. Matching is by email, which is the one field
  * both systems agree on; anything unmatched is offered rather than assumed.
  */
-r.get('/roster', requireAuth, requireRole('admin'), wrap(async (_req, res) => {
-  const [me, users, staff] = await Promise.all([
-    getMe().then((x) => unwrap(x, 'me')).catch((e) => ({ error: e.message })),
-    getUsers().then((x) => extractList(x, 'users')),
-    q(`SELECT id, full_name, email, job_title, isn_user_id FROM employees WHERE status = 'Active'`),
+r.get('/roster', requireAuth, requireRole('admin'), wrap(async (req, res) => {
+  const [cached, staff, totals] = await Promise.all([
+    // Inspectors first and the unmatched above the matched, because this list
+    // exists to be worked through. 250 users is a lot to scroll for the four
+    // who actually place radon monitors.
+    q(`SELECT u.*, e.id AS employee_id, e.full_name AS employee_name
+         FROM isn_users u
+         LEFT JOIN employees e ON e.isn_user_id = u.isn_user_id
+        WHERE u.visible
+          AND ($1::boolean IS NOT TRUE OR u.is_inspector)
+        ORDER BY u.is_inspector DESC, (e.id IS NULL) DESC, u.display_name NULLS LAST
+        LIMIT 400`,
+      [req.query.inspectors === 'true']),
+    q(`SELECT id, full_name, email, job_title, isn_user_id FROM employees WHERE status = 'Active'
+        ORDER BY full_name`),
+    q(`SELECT count(*)::int AS listed,
+              count(*) FILTER (WHERE is_inspector)::int AS inspectors,
+              count(*) FILTER (WHERE detail_pulled_at IS NULL)::int AS stubs_only,
+              max(detail_pulled_at) AS last_refreshed
+         FROM isn_users WHERE visible`),
   ]);
 
   const byEmail = new Map(
     staff.rows.filter((e) => e.email).map((e) => [e.email.toLowerCase(), e])
   );
-  const byIsnId = new Map(staff.rows.filter((e) => e.isn_user_id).map((e) => [e.isn_user_id, e]));
 
-  // ISN's User: firstname, lastname, displayname, emailaddress, and inspector
-  // and owner as booleans. `show` false means deleted.
-  const named = (u) =>
-    u.displayname || [u.firstname, u.lastname].filter(Boolean).join(' ') || u.emailaddress;
-
-  const roster = users.map((u) => {
-    const isnId = String(u.id ?? '');
-    const email = (u.emailaddress || '').toLowerCase() || null;
-    const linked = byIsnId.get(isnId) || null;
-    const suggestion = !linked && email ? byEmail.get(email) || null : null;
+  const roster = cached.rows.map((u) => {
+    const email = (u.email || '').toLowerCase() || null;
+    const suggestion = !u.employee_id && email ? byEmail.get(email) || null : null;
     return {
-      isn_user_id: isnId,
-      name: named(u) || 'Unnamed',
+      isn_user_id: u.isn_user_id,
+      name: u.display_name || u.email || 'Not read yet',
       email,
-      role: u.owner ? 'Owner' : u.inspector ? 'Inspector' : 'Office',
-      isInspector: !!u.inspector,
-      inactive: u.show === false,
-      employee_id: linked?.id ?? null,
-      employee_name: linked?.full_name ?? null,
+      role: u.is_owner ? 'Owner' : u.is_inspector ? 'Inspector' : 'Office',
+      isInspector: u.is_inspector,
+      inactive: !u.visible,
+      stubOnly: !u.detail_pulled_at,
+      employee_id: u.employee_id,
+      employee_name: u.employee_name,
       suggested_employee_id: suggestion?.id ?? null,
       suggested_employee_name: suggestion?.full_name ?? null,
     };
   });
 
   res.json({
-    keysBelongTo: me?.error ? null : (named(me) || null),
-    meError: me?.error ?? null,
     roster,
     employees: staff.rows,
-    unlinked: roster.filter((x) => !x.employee_id && !x.inactive).length,
+    totals: totals.rows[0],
+    unlinked: roster.filter((x) => !x.employee_id && x.isInspector).length,
+  });
+}));
+
+/**
+ * Read the ISN user list properly.
+ *
+ * Separate from loading the page because it is one call per person. Held to
+ * the ones whose details actually changed, so only the first run is slow.
+ */
+r.post('/roster/refresh', requireAuth, requireRole('admin'), wrap(async (req, res) => {
+  const [me, out] = await Promise.all([
+    getMe().then((x) => unwrap(x, 'me')).catch((e) => ({ error: e.message })),
+    refreshUsers({ force: req.body?.force === true }),
+  ]);
+  res.json({
+    ...out,
+    keysBelongTo: me?.error ? null
+      : (me.displayname || [me.firstname, me.lastname].filter(Boolean).join(' ') || me.emailaddress || null),
+    meError: me?.error ?? null,
   });
 }));
 

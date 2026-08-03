@@ -21,6 +21,21 @@ export default function Isn() {
   const [key, setKey] = useState('');
   const [probe, setProbe] = useState(null);
   const [people, setPeople] = useState(null);
+  const [onlyInspectors, setOnlyInspectors] = useState(true);
+  const [whose, setWhose] = useState(null);
+
+  useEffect(() => { if (people) load(); }, [onlyInspectors]);
+
+  const refreshRoster = () =>
+    run('roster', async () => {
+      const out = await api('/isn/roster/refresh', { method: 'POST', body: {} });
+      setWhose(out.keysBelongTo);
+      await load();
+      setNote(
+        `Read ${out.detailed} of ${out.listed} people${out.skipped ? `, ${out.skipped} unchanged` : ''}` +
+        `${out.failures?.length ? `. ${out.failures.length} could not be read.` : '.'}`
+      );
+    });
 
   const adopt = (u, employeeId) =>
     run(u.isn_user_id, async () => {
@@ -44,7 +59,7 @@ export default function Isn() {
     Promise.all([
       api('/isn/status'),
       api('/isn/inspectors').catch(() => null),
-      api('/isn/roster').catch((e) => ({ error: e.message })),
+      api(`/isn/roster${onlyInspectors ? '?inspectors=true' : ''}`).catch((e) => ({ error: e.message })),
     ])
       .then(([s, i, r]) => {
         setStatus(s);
@@ -203,17 +218,27 @@ export default function Isn() {
           <div>
             <h2>People on your ISN</h2>
             <div className="sub">
-              {people?.keysBelongTo
-                ? <>The keys belong to <b>{people.keysBelongTo}</b>. Orders are pulled company-wide,
-                    so this is not limited to their own jobs.</>
-                : 'Straight from ISN, so somebody hired last week can be given a login before their first job.'}
+              {whose && <>The keys belong to <b>{whose}</b>. Orders are pulled company-wide, so this
+                is not limited to their own jobs. </>}
+              {people?.totals?.listed
+                ? <>{people.totals.listed} on the ISN, {people.totals.inspectors} of them inspectors.
+                    {people.totals.stubs_only > 0 && ` ${people.totals.stubs_only} not read yet.`}</>
+                : 'Read the list from ISN to get started.'}
             </div>
           </div>
-          {people?.unlinked > 0 && (
-            <span className="pill amber" style={{ marginLeft: 'auto' }}>
-              {people.unlinked} not set up here
-            </span>
-          )}
+          <div style={{ marginLeft: 'auto', display: 'flex', gap: 10, alignItems: 'center' }}>
+            {people?.unlinked > 0 && (
+              <span className="pill amber">{people.unlinked} inspectors to set up</span>
+            )}
+            <button className="btn" style={{ width: 'auto' }}
+                    onClick={() => setOnlyInspectors((v) => !v)}>
+              {onlyInspectors ? 'Show everyone' : 'Inspectors only'}
+            </button>
+            <button className="btn primary" style={{ width: 'auto' }}
+                    disabled={busy === 'roster'} onClick={refreshRoster}>
+              {busy === 'roster' ? <span className="spinner" /> : null} Read from ISN
+            </button>
+          </div>
         </div>
 
         {people?.error ? (
@@ -222,8 +247,13 @@ export default function Isn() {
           </div>
         ) : !people?.roster?.length ? (
           <div className="empty">
-            <h3>Nothing back from ISN yet</h3>
-            <p>Switch the link on, then this fills in from your ISN's own user list.</p>
+            <div className="ico"><Icon name="users" size={24} /></div>
+            <h3>{people?.totals?.listed ? 'No inspectors in that view' : 'Nothing read yet'}</h3>
+            <p>
+              {people?.totals?.listed
+                ? 'Nobody here is flagged as an inspector in ISN. Show everyone to see the rest.'
+                : 'ISN gives the user list as bare ids — the names come one call at a time, so it is fetched on request rather than every time this page opens.'}
+            </p>
           </div>
         ) : (
           <div className="table-wrap">
