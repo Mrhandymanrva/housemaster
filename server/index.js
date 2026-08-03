@@ -6,7 +6,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readdir, readFile } from 'node:fs/promises';
 
-import { pool, q } from './lib/db.js';
+import { pool, q, describeTarget } from './lib/db.js';
+import { secretIsPlaceholder } from './lib/auth.js';
 import { syncCatalog } from './catalog/sync.js';
 import authRoutes from './routes/auth.js';
 import userRoutes from './routes/users.js';
@@ -66,14 +67,38 @@ async function migrate() {
   }
 }
 
+/**
+ * Nothing here listens on a port, so a failure at this stage shows up in
+ * Railway only as a healthcheck that never answers. Say plainly what was being
+ * attempted, so the deploy log names the cause instead of the symptom.
+ */
+async function preflight() {
+  if (process.env.NODE_ENV === 'production' && secretIsPlaceholder()) {
+    throw new Error(
+      'JWT_SECRET is not set, and in production the built-in fallback is not usable — ' +
+      'it is printed in the source. Set JWT_SECRET to 64 random characters and redeploy.'
+    );
+  }
+  if (!process.env.DATABASE_URL) {
+    console.warn('[startup] No DATABASE_URL. Falling back to a local postgres.');
+  }
+  console.log(`[startup] Connecting to ${describeTarget()}`);
+  try {
+    await q('SELECT 1');
+  } catch (err) {
+    throw new Error(`Cannot reach ${describeTarget()} — ${err.message}`);
+  }
+}
+
 const port = process.env.PORT || 8080;
 try {
+  await preflight();
   await migrate();
   await syncCatalog();
   await q('SELECT refresh_compliance()');
   await q('SELECT refresh_compliance_radon()');
   app.listen(port, () => console.log(`HouseMaster Ops listening on ${port}`));
 } catch (err) {
-  console.error('Startup failed:', err);
+  console.error(`\nStartup failed. ${err.message}\n`);
   process.exit(1);
 }

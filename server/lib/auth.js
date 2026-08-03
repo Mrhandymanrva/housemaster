@@ -3,12 +3,12 @@ import bcrypt from 'bcryptjs';
 import { q } from './db.js';
 import { forbidden, HttpError } from './http.js';
 
-// A deployed server with no JWT_SECRET would sign every session with a string
-// that is printed in this file, so it refuses to start instead of pretending.
-if (process.env.NODE_ENV === 'production' && !process.env.JWT_SECRET) {
-  throw new Error('JWT_SECRET is not set. Set it before starting in production.');
-}
 const SECRET = process.env.JWT_SECRET || 'dev-only-change-me';
+
+// A deployed server with no JWT_SECRET would sign every session with a string
+// that is printed in this file. Checked at startup rather than thrown on import,
+// so the message lands with the other startup errors instead of ahead of them.
+export const secretIsPlaceholder = () => !process.env.JWT_SECRET;
 const RANK = { field: 1, office: 2, admin: 3, owner: 4 };
 
 export const signToken = (user) =>
