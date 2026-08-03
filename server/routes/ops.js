@@ -260,6 +260,49 @@ r.post('/lookups', requireAuth, requireRole('admin'), wrap(async (req, res) => {
   res.json({ value: rows[0] });
 }));
 
+// Every list with everything in it, switched-off values included, plus the
+// screens each one feeds — so it is clear what a change is about to affect.
+r.get('/lookup-lists', requireAuth, requireRole('admin'), wrap(async (_req, res) => {
+  const { rows } = await q(
+    `SELECT l.key, l.label, l.description,
+            COALESCE(u.used_by, '{}') AS used_by,
+            COALESCE(json_agg(json_build_object(
+              'id', v.id, 'value', v.value, 'label', v.label,
+              'color', v.color, 'sort', v.sort, 'active', v.active
+            ) ORDER BY v.sort, v.label) FILTER (WHERE v.id IS NOT NULL), '[]') AS values
+       FROM lookup_lists l
+       LEFT JOIN lookup_values v ON v.list_key = l.key
+       LEFT JOIN LATERAL (
+         SELECT array_agg(DISTINCT e.label_plural || ' — ' || f.label) AS used_by
+           FROM meta_fields f
+           JOIN meta_entities e ON e.key = f.entity_key
+          WHERE f.lookup_list = l.key
+       ) u ON true
+      GROUP BY l.key, l.label, l.description, u.used_by
+      ORDER BY l.label`
+  );
+  res.json({ lists: rows });
+}));
+
+// Rename, reorder, or switch a choice off. Switching off keeps it out of the
+// dropdowns while leaving records that already use it readable.
+r.patch('/lookups/:id', requireAuth, requireRole('admin'), wrap(async (req, res) => {
+  const allowed = ['label', 'color', 'sort', 'active'];
+  const entries = Object.entries(req.body).filter(([k]) => allowed.includes(k));
+  if (!entries.length) throw bad('Nothing to change');
+
+  const set = entries.map(([k], i) => `"${k}" = $${i + 1}`).join(', ');
+  const vals = entries.map(([, v]) => v);
+  vals.push(req.params.id);
+  const { rows } = await q(
+    `UPDATE lookup_values SET ${set} WHERE id = $${vals.length} RETURNING *`,
+    vals
+  );
+  if (!rows[0]) throw notFound('No such choice');
+  bustCatalog();
+  res.json({ value: rows[0] });
+}));
+
 r.patch('/screens/:entity/fields/:column', requireAuth, requireRole('admin'), wrap(async (req, res) => {
   const allowed = ['label', 'show_in_list', 'list_order', 'form_section', 'form_order', 'width'];
   const entries = Object.entries(req.body).filter(([k]) => allowed.includes(k));

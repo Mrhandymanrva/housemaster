@@ -417,6 +417,23 @@ const demoLogins = [
     app_role: 'field', active: true, last_login_at: null },
 ];
 
+const val = (n, label, sort, active = true) =>
+  ({ id: `lv${n}`, value: label, label, sort, color: null, active });
+
+const demoLists = [
+  { key: 'asset_category', label: 'Asset categories', used_by: ['Equipment — Category'],
+    values: [
+      val(1, 'Radon monitors', 10), val(2, 'Sewer scopes', 20), val(3, 'Thermal cameras', 30),
+      val(4, 'Moisture meters', 40), val(5, 'Drones', 50), val(6, '360 cameras', 60),
+      val(7, 'Ladders & access', 70), val(8, 'Electrical testers', 80),
+    ] },
+  { key: 'asset_condition', label: 'Asset condition', used_by: ['Equipment — Condition'],
+    values: [val(9, 'Excellent', 10), val(10, 'Good', 20), val(11, 'Fair', 30), val(12, 'Replace Soon', 40)] },
+  { key: 'employee_role', label: 'Employee roles', used_by: ['Employees — Role'],
+    values: [val(13, 'Owner', 10), val(14, 'Inspector', 30), val(15, 'Radon Technician', 40),
+             val(16, 'Apprentice', 70, false)] },
+];
+
 export async function demoFetch(path, opts = {}) {
   await new Promise((r) => setTimeout(r, 90));
   const [p] = path.split('?');
@@ -427,6 +444,7 @@ export async function demoFetch(path, opts = {}) {
   if (p === '/users') return { users: demoLogins, roles: ['field', 'office', 'admin', 'owner'] };
   if (p === '/records/catalog') return { entities: catalog };
   if (p === '/ops/lookups') return { lookups: {} };
+  if (p === '/ops/lookup-lists') return { lists: demoLists };
   if (p === '/ops/field/config') return { modules };
   if (p === '/ops/dashboard') {
     const buckets = horizon.reduce((a, h) => ({ ...a, [h.state]: (a[h.state] || 0) + 1 }), {});
