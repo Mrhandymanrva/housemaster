@@ -492,7 +492,7 @@ INSERT INTO lookup_lists (key, label, description) VALUES
   ('radon_custody_event', 'Custody event',       'Steps in the chain of custody')
 ON CONFLICT (key) DO NOTHING;
 
-INSERT INTO lookup_values (list_key, value, label, sort_order) VALUES
+INSERT INTO lookup_values (list_key, value, label, sort) VALUES
   ('radon_test_method','Continuous Monitor','Continuous monitor',10),
   ('radon_test_method','Charcoal Canister','Charcoal canister',20),
   ('radon_test_method','Alpha Track','Alpha track',30),
