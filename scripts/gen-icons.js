@@ -8,7 +8,7 @@
 import { deflateSync } from 'node:zlib';
 import { writeFile } from 'node:fs/promises';
 
-const RED = [0xd3, 0x3a, 0x2c];
+const BRAND = [0x00, 0x71, 0x3c];   // HouseMaster green
 const WHITE = [0xff, 0xff, 0xff];
 
 const crcTable = Array.from({ length: 256 }, (_, n) => {
@@ -76,9 +76,9 @@ function mark(size) {
     }
     if (y > eaves && y <= base && Math.abs(dx) <= wall) {
       const inDoor = y >= doorTop && y <= base && Math.abs(dx) <= doorW;
-      return inDoor ? RED : WHITE;
+      return inDoor ? BRAND : WHITE;
     }
-    return RED;
+    return BRAND;
   };
 }
 

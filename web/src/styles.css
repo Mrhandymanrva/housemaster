@@ -21,6 +21,13 @@
   --text-2: #56657A;
   --text-3: #8A97A8;
 
+  /* HouseMaster green. Branding only — the logo mark, the active tab, the
+     button you press to commit. Red stays red: it means overdue, or stop. A
+     company whose brand colour is also its alarm colour has neither. */
+  --brand:    #00713C;
+  --brand-bg: #E4F2EA;
+  --brand-2:  #005C31;
+
   --red:      #D33A2C;
   --red-bg:   #FDECEA;
   --amber:    #B06A00;
@@ -78,7 +85,7 @@ button { font: inherit; color: inherit; }
 .brand { display: flex; align-items: center; gap: 11px; padding: 2px 6px 20px; }
 .brand-mark {
   width: 36px; height: 36px; border-radius: 10px;
-  background: var(--red); color: #fff;
+  background: var(--brand); color: #fff;
   display: grid; place-items: center;
   font-weight: 700; font-size: 14px; letter-spacing: 0.02em;
 }
@@ -94,7 +101,7 @@ button { font: inherit; color: inherit; }
   width: 100%; text-align: left;
 }
 .nav-item:hover { background: var(--surface-3); color: var(--text); }
-.nav-item.active { background: var(--red-bg); color: var(--red); font-weight: 600; }
+.nav-item.active { background: var(--brand-bg); color: var(--brand); font-weight: 600; }
 .nav-item svg { flex: 0 0 auto; }
 .nav-item .count {
   margin-left: auto; min-width: 22px; height: 22px; padding: 0 6px;
@@ -306,7 +313,7 @@ table.data td.num, table.data td.id { font-family: var(--mono); font-size: 13.5p
   transition: background .12s ease, border-color .12s ease;
 }
 .btn:hover { background: var(--surface-2); border-color: #B9C5D4; }
-.btn.primary { background: var(--red); border-color: var(--red); color: #fff; font-weight: 600; }
+.btn.primary { background: var(--brand); border-color: var(--brand); color: #fff; font-weight: 600; }
 .btn.primary:hover { background: #B92E22; border-color: #B92E22; }
 .btn.ghost { background: transparent; border-color: transparent; color: var(--text-2); }
 .btn.ghost:hover { background: var(--surface-3); color: var(--text); }

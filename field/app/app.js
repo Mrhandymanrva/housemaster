@@ -19,6 +19,7 @@ const LS = {
   reminders: 'hm_field_reminders',
   options: 'hm_field_options',
   ledger: 'hm_field_ledger',
+  today: 'hm_field_today',
   queue: 'hm_field_queue',
   device: 'hm_field_device',
 };
@@ -35,6 +36,7 @@ const state = {
   reminders: read(LS.reminders, []),
   options: read(LS.options, {}),
   ledger: read(LS.ledger, []),
+  today: read(LS.today, null),
   route: { name: 'home' },
   draft: {},
   busy: false,
@@ -98,11 +100,16 @@ async function flush() {
 
 // --------------------------------------------------------------- loading
 async function refresh() {
-  const [cfg, rem, led] = await Promise.allSettled([
+  const [cfg, rem, led, day] = await Promise.allSettled([
     api('/ops/field/config'),
     api('/ops/field/reminders'),
     api('/radon/ledger'),
+    api('/ops/field/today'),
   ]);
+  if (day.status === 'fulfilled') {
+    state.today = day.value;
+    write(LS.today, state.today);
+  }
   if (cfg.status === 'fulfilled') {
     state.modules = cfg.value.modules || [];
     write(LS.config, state.modules);
@@ -264,6 +271,51 @@ function loginScreen() {
   return box;
 }
 
+/** Today's work and this week's, in the order a tech would ask for them. */
+function countBlock() {
+  const t = state.today;
+  const box = el('<div></div>');
+  if (!t) return box;
+
+  if (!t.linked) {
+    box.append(el('<div class="section-label">Your day</div>'));
+    box.append(el(`<div class="rem"><div class="what">
+      <div class="title">This login is not tied to a person yet</div>
+      <div class="sub">The office links it under Logins, and then your jobs and
+        deadlines show up here.</div>
+    </div></div>`));
+    return box;
+  }
+
+  const kinds = t.kinds || [];
+  const row = (period, data) => {
+    const cells = [
+      { label: 'Inspections', n: data.inspections, lead: true },
+      { label: 'Radon sets', n: data.radon, lead: true },
+      ...kinds.map((k) => ({ label: k.label, n: data[k.key] ?? 0 })),
+    ];
+    const grid = el('<div class="stats"></div>');
+    for (const c of cells) {
+      grid.append(el(`<div class="stat ${c.n ? (c.lead ? 'lead' : '') : 'none'}">
+        <b>${c.n ?? 0}</b><span>${esc(c.label)}</span></div>`));
+    }
+    const wrapper = el(`<div><div class="section-label">${esc(period)}</div></div>`);
+    wrapper.append(grid);
+    return wrapper;
+  };
+
+  box.append(row('Today', t.today));
+  box.append(row('This week', t.week));
+
+  // Radon comes from our own sets and is always true. The rest is ISN's, and
+  // a confident zero from a link that is switched off would be a lie.
+  if (!t.isn?.connected) {
+    box.append(el(`<div class="hint">Job counts need the ISN link, which is off —
+      radon sets are counted from your own placements.</div>`));
+  }
+  return box;
+}
+
 function homeScreen() {
   const wrap = el('<div></div>');
   wrap.append(el(`
@@ -286,12 +338,38 @@ function homeScreen() {
   if (state.err) body.append(el(`<div class="banner">${esc(state.err)}</div>`));
   if (state.flash) body.append(el(`<div class="ok">${esc(state.flash)}</div>`));
 
-  // ------------------------------------------------------------ reminders
-  const overdue = state.reminders.filter((r) => r.days_out < 0);
-  const soon = state.reminders.filter((r) => r.days_out >= 0);
-  if (state.reminders.length) {
+  // ---------------------------------------------------------------- count
+  body.append(countBlock());
+
+  // ------------------------------------------------------------ deadlines
+  // /today carries a wider horizon than /reminders; prefer it and fall back
+  // so the screen still works from whatever was cached last.
+  const dates = state.today?.deadlines?.length ? state.today.deadlines : state.reminders;
+  const overdue = dates.filter((r) => r.days_out < 0);
+  const soon = dates.filter((r) => r.days_out >= 0);
+  const ceu = state.today?.ceu;
+
+  if (dates.length || ceu) {
     body.append(el('<div class="section-label">Needs your attention</div>'));
     const list = el('<div class="reminders"></div>');
+
+    if (ceu) {
+      const done = Math.min(100, Math.round((ceu.completed / ceu.required) * 100));
+      list.append(el(`
+        <div class="ceu">
+          <div class="row">
+            <b>Continuing education</b>
+            <span>${ceu.completed} of ${ceu.required} hours</span>
+          </div>
+          <div class="meter ${ceu.short > 0 ? 'short' : ''}"><i style="width:${done}%"></i></div>
+          <div class="hint" style="margin-top:8px">${
+            ceu.short > 0
+              ? `${ceu.short} more ${ceu.short === 1 ? 'hour' : 'hours'} before your next renewal.`
+              : 'Enough hours on the board for your next renewal.'
+          }</div>
+        </div>`));
+    }
+
     for (const r of [...overdue, ...soon]) {
       list.append(el(`
         <div class="rem ${r.days_out < 0 ? 'overdue' : r.days_out <= 30 ? 'soon' : ''}">
@@ -303,6 +381,12 @@ function homeScreen() {
         </div>`));
     }
     body.append(list);
+  } else if (state.today) {
+    body.append(el('<div class="section-label">Needs your attention</div>'));
+    body.append(el(`<div class="rem"><div class="what">
+      <div class="title">Nothing is due</div>
+      <div class="sub">No licence, van or equipment deadline in the next three months.</div>
+    </div></div>`));
   }
 
   // --------------------------------------------------------------- tiles
