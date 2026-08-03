@@ -7,7 +7,7 @@
  * guesses too. These pin both down.
  */
 import assert from 'node:assert/strict';
-import { extractList, describeShape, unwrap, normalizeOrder, hasRadon, radonFee }
+import { extractList, describeShape, unwrap, normalizeOrder, hasRadon, radonFee, bool }
   from './integrations/isn.js';
 
 let pass = 0;
@@ -146,5 +146,36 @@ t('an ordinary inspection is not radon', () => {
   assert.equal(hasRadon([{ uuid: 's1', name: 'Home Inspection' }], ['radon']), false);
 });
 t('the fee comes off the fee entry', () => assert.equal(radonFee(o.services), 150));
+
+console.log('\n"yes" and "no" are not booleans');
+t('"no" is false, not truthy', () => {
+  // !!"no" is true, which is how all 250 users came back flagged as both an
+  // inspector and an owner.
+  assert.equal(bool('no'), false);
+  assert.equal(bool('No'), false);
+  assert.equal(bool('0'), false);
+});
+t('"yes" is true', () => {
+  assert.equal(bool('yes'), true);
+  assert.equal(bool('YES'), true);
+  assert.equal(bool(true), true);
+});
+t('unset stays unset rather than defaulting to true', () => {
+  assert.equal(bool(undefined), false);
+  assert.equal(bool(''), false);
+  assert.equal(bool(null, true), true, 'an explicit fallback is honoured');
+});
+t('an explicit false beats the fallback', () => assert.equal(bool(false, true), false));
+t('something unrecognised falls back rather than guessing', () => {
+  assert.equal(bool('maybe', true), true);
+});
+
+console.log('\nwhich branch a job belongs to');
+t('the office comes off the order', () => {
+  assert.equal(normalizeOrder({ id: 'x', office: 'off-1' }, {}).isn_office_id, 'off-1');
+});
+t('no office is null, not an empty string', () => {
+  assert.equal(normalizeOrder({ id: 'x', office: '' }, {}).isn_office_id, null);
+});
 
 console.log(`\n${pass} checks passed\n`);

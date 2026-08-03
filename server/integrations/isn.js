@@ -214,6 +214,32 @@ export const getMe = () => call('/me');
 /** Every user on the ISN — inspectors, office, owners. */
 export const getUsers = () => call('/users');
 
+/** The branches on this ISN. A shared ISN has several; a single one has one. */
+export const getOffices = () => call('/offices');
+
+/**
+ * Refresh the office list and return it.
+ *
+ * Offices come back whole rather than as stubs, so this is one call.
+ */
+export async function refreshOffices() {
+  const offices = extractList(await getOffices(), 'offices');
+  for (const o of offices) {
+    if (!o?.id) continue;
+    await q(
+      `INSERT INTO isn_offices (isn_office_id, name, slug, city, state, manager, visible, last_seen_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7, now())
+       ON CONFLICT (isn_office_id) DO UPDATE SET
+         name = EXCLUDED.name, slug = EXCLUDED.slug, city = EXCLUDED.city,
+         state = EXCLUDED.state, manager = EXCLUDED.manager,
+         visible = EXCLUDED.visible, last_seen_at = now()`,
+      [String(o.id), blank(o.name), blank(o.slug), blank(o.city), blank(o.state),
+       blank(o.manager), bool(o.show, true)]
+    );
+  }
+  return offices.length;
+}
+
 /**
  * Refresh the local copy of the ISN user list.
  *
@@ -224,16 +250,21 @@ export const getUsers = () => call('/users');
  */
 export async function refreshUsers({ force = false, concurrency = 6, includeDeleted = false,
                                      limit = 500 } = {}) {
+  await refreshOffices().catch(() => 0);
+  const c = await conn();
+  const ours = c?.isn_office_id || null;
+
   const stubs = extractList(await getUsers(), 'users');
 
   const known = new Map(
-    (await q(`SELECT isn_user_id, isn_modified, detail_pulled_at FROM isn_users`)).rows
+    (await q(`SELECT isn_user_id, isn_modified, detail_pulled_at, office FROM isn_users`)).rows
       .map((r) => [r.isn_user_id, r])
   );
 
   const seen = [];
   const wanted = [];
   let deleted = 0;
+  let elsewhere = 0;
   for (const s of stubs) {
     const id = String(s.id ?? '');
     if (!id) continue;
@@ -242,7 +273,7 @@ export async function refreshUsers({ force = false, concurrency = 6, includeDele
     // ISN keeps everyone who ever had an account. `show: false` is a deleted
     // user, and reading their details costs a call to learn the name of
     // somebody who left years ago.
-    const visible = s.show !== false;
+    const visible = bool(s.show, true);
     if (!visible && !includeDeleted) {
       deleted += 1;
       await q(
@@ -255,6 +286,15 @@ export async function refreshUsers({ force = false, concurrency = 6, includeDele
     }
 
     const mine = known.get(id);
+
+    // The stub does not say which office somebody belongs to, so the first run
+    // has to read everyone to find out. Once it is known, people at other
+    // branches are left alone.
+    if (ours && mine?.detail_pulled_at && mine.office && mine.office !== ours && !force) {
+      elsewhere += 1;
+      continue;
+    }
+
     const unchanged = mine?.detail_pulled_at
       && String(mine.isn_modified?.toISOString?.() ?? mine.isn_modified ?? '') === String(s.modified ?? '');
     if (force || !unchanged) wanted.push({ id, modified: s.modified ?? null, visible });
@@ -296,7 +336,7 @@ export async function refreshUsers({ force = false, concurrency = 6, includeDele
           u ? (u.displayname || [u.firstname, u.lastname].filter(Boolean).join(' ') || null) : null,
           u?.firstname ?? null, u?.lastname ?? null,
           u?.emailaddress ?? null, u?.mobile ?? u?.phone ?? null,
-          !!u?.inspector, !!u?.owner, u?.office ?? null,
+          bool(u?.inspector), bool(u?.owner), blank(u?.office),
           w.visible, w.modified || null,
           u ? new Date() : null,
           u ? JSON.stringify(u) : null,
@@ -312,11 +352,17 @@ export async function refreshUsers({ force = false, concurrency = 6, includeDele
     await q(`UPDATE isn_users SET visible = false WHERE isn_user_id <> ALL($1::text[])`, [seen]);
   }
 
+  await q(
+    `UPDATE isn_users u SET office_name = o.name
+       FROM isn_offices o WHERE o.isn_office_id = u.office AND u.office_name IS DISTINCT FROM o.name`
+  );
+
   return {
     listed: stubs.length,
     deleted,
+    elsewhere,
     detailed: pulled,
-    unchanged: stubs.length - deleted - wanted.length - remaining,
+    unchanged: stubs.length - deleted - elsewhere - wanted.length - remaining,
     remaining,
     failures,
   };
@@ -369,8 +415,20 @@ const num = (v) => {
   return Number.isFinite(n) && String(v ?? '').trim() !== '' ? n : null;
 };
 const blank = (v) => (v === '' || v == null ? null : v);
-/** ISN returns booleans as the strings "yes" and "no". */
-const yes = (v) => String(v).toLowerCase() === 'yes' || v === true;
+/**
+ * ISN returns booleans as the strings "yes" and "no" — and `!!"no"` is true,
+ * which is how every user came back flagged as both an inspector and an owner.
+ * Anything genuinely unset stays unset rather than defaulting to true.
+ */
+export function bool(v, fallback = false) {
+  if (v === true || v === false) return v;
+  if (v == null || v === '') return fallback;
+  const s = String(v).trim().toLowerCase();
+  if (['yes', 'true', '1', 'y'].includes(s)) return true;
+  if (['no', 'false', '0', 'n'].includes(s)) return false;
+  return fallback;
+}
+const yes = (v) => bool(v);
 
 /** A person's name, however this endpoint spells it. */
 const personName = (p) =>
@@ -406,6 +464,7 @@ export function normalizeOrder(order, extras = {}) {
     property_address: [blank(order.address1), blank(order.address2)].filter(Boolean).join(' ') || null,
     property_city: blank(order.city),
     property_state: blank(order.stateabbreviation) ?? blank(order.state),
+    isn_office_id: blank(order.office),
     property_zip: blank(order.zip),
     square_feet: num(order.squarefeet),
     year_built: num(order.yearbuilt),
@@ -483,9 +542,15 @@ export async function syncOnce({ source = 'schedule' } = {}) {
 
     // One pass per order, whichever source named it. A footprint points at its
     // order through `order`; an order names itself through `id`.
+    // On a shared ISN most of these orders belong to other branches. Skipping
+    // them here saves a call each, and there is no point caching another
+    // office's clients.
+    const ours = c.isn_office_id || null;
+    const mine = (o) => !ours || !o?.office || String(o.office) === ours;
+
     const work = new Map();
     for (const o of everyOrder) {
-      if (o?.id && withinWindow(o.datetime)) work.set(String(o.id), null);
+      if (o?.id && withinWindow(o.datetime) && mine(o)) work.set(String(o.id), null);
     }
     for (const fp of footprints) {
       if (fp?.order) work.set(String(fp.order), fp.id ?? null);
@@ -513,11 +578,11 @@ export async function syncOnce({ source = 'schedule' } = {}) {
                 property_address, property_city, property_state, property_zip,
                 square_feet, year_built, foundation_type,
                 client_name, client_phone, client_email, agent_name, agent_email,
-                services, has_radon, radon_fee, order_status, raw, last_pulled_at)
+                services, has_radon, radon_fee, order_status, isn_office_id, raw, last_pulled_at)
              VALUES ($1,$2,$3,$4,$5,$6,$7,
                      (SELECT id FROM employees WHERE isn_user_id = $6 LIMIT 1),
                      $8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,
-                     $20::jsonb,$21,$22,$23,$24::jsonb, now())
+                     $20::jsonb,$21,$22,$23,$24,$25::jsonb, now())
              ON CONFLICT (isn_order_id) DO UPDATE SET
                scheduled_start = EXCLUDED.scheduled_start,
                scheduled_end   = EXCLUDED.scheduled_end,
@@ -535,6 +600,7 @@ export async function syncOnce({ source = 'schedule' } = {}) {
                has_radon       = EXCLUDED.has_radon,
                radon_fee       = EXCLUDED.radon_fee,
                order_status    = EXCLUDED.order_status,
+               isn_office_id   = EXCLUDED.isn_office_id,
                raw             = EXCLUDED.raw,
                last_pulled_at  = now()
              RETURNING id, has_radon`,
@@ -543,7 +609,7 @@ export async function syncOnce({ source = 'schedule' } = {}) {
              o.property_address, o.property_city, o.property_state, o.property_zip,
              o.square_feet, o.year_built, o.foundation_type,
              o.client_name, o.client_phone, o.client_email, o.agent_name, o.agent_email,
-             JSON.stringify(o.services), radon, radonFee(o.services), o.order_status,
+             JSON.stringify(o.services), radon, radonFee(o.services), o.order_status, o.isn_office_id,
              JSON.stringify(order)]
           )).rows[0];
 

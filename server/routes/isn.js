@@ -45,7 +45,10 @@ r.get('/probe', requireAuth, requireRole('admin'), wrap(async (_req, res) => {
  * both systems agree on; anything unmatched is offered rather than assumed.
  */
 r.get('/roster', requireAuth, requireRole('admin'), wrap(async (req, res) => {
-  const [cached, staff, totals] = await Promise.all([
+  const c = (await q('SELECT isn_office_id FROM isn_connection LIMIT 1')).rows[0] || {};
+  const scope = req.query.allOffices === 'true' ? null : (c.isn_office_id || null);
+
+  const [cached, staff, totals, offices] = await Promise.all([
     // Inspectors first and the unmatched above the matched, because this list
     // exists to be worked through. 250 users is a lot to scroll for the four
     // who actually place radon monitors.
@@ -54,16 +57,21 @@ r.get('/roster', requireAuth, requireRole('admin'), wrap(async (req, res) => {
          LEFT JOIN employees e ON e.isn_user_id = u.isn_user_id
         WHERE u.visible
           AND ($1::boolean IS NOT TRUE OR u.is_inspector)
+          AND ($2::text IS NULL OR u.office IS NULL OR u.office = $2)
         ORDER BY u.is_inspector DESC, (e.id IS NULL) DESC, u.display_name NULLS LAST
         LIMIT 400`,
-      [req.query.inspectors === 'true']),
+      [req.query.inspectors === 'true', scope]),
     q(`SELECT id, full_name, email, job_title, isn_user_id FROM employees WHERE status = 'Active'
         ORDER BY full_name`),
     q(`SELECT count(*)::int AS listed,
               count(*) FILTER (WHERE is_inspector)::int AS inspectors,
               count(*) FILTER (WHERE detail_pulled_at IS NULL)::int AS stubs_only,
+              count(*) FILTER (WHERE $1::text IS NULL OR office IS NULL OR office = $1)::int AS in_our_office,
               max(detail_pulled_at) AS last_refreshed
-         FROM isn_users WHERE visible`),
+         FROM isn_users WHERE visible`, [scope]),
+    q(`SELECT o.*, count(u.isn_user_id)::int AS people
+         FROM isn_offices o LEFT JOIN isn_users u ON u.office = o.isn_office_id AND u.visible
+        WHERE o.visible GROUP BY o.isn_office_id ORDER BY o.name`),
   ]);
 
   const byEmail = new Map(
@@ -92,6 +100,8 @@ r.get('/roster', requireAuth, requireRole('admin'), wrap(async (req, res) => {
     roster,
     employees: staff.rows,
     totals: totals.rows[0],
+    offices: offices.rows,
+    ourOffice: c.isn_office_id || null,
     unlinked: roster.filter((x) => !x.employee_id && x.isInspector).length,
   });
 }));
@@ -160,7 +170,7 @@ r.post('/sync', requireAuth, requireRole('office'), wrap(async (_req, res) => {
 
 r.patch('/connection', requireAuth, requireRole('admin'), wrap(async (req, res) => {
   const allowed = ['company_key', 'service_domain', 'enabled', 'pull_window_days',
-                   'auto_create_sets', 'radon_service_match', 'integration_user'];
+                   'auto_create_sets', 'radon_service_match', 'integration_user', 'isn_office_id'];
   const sets = [], vals = [];
   for (const k of allowed) {
     if (req.body[k] !== undefined) { vals.push(req.body[k]); sets.push(`${k} = $${vals.length}`); }

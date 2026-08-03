@@ -224,10 +224,36 @@ export default function Isn() {
               {whose && <>The keys belong to <b>{whose}</b>. Orders are pulled company-wide, so this
                 is not limited to their own jobs. </>}
               {people?.totals?.listed
-                ? <>{people.totals.listed} on the ISN, {people.totals.inspectors} of them inspectors.
-                    {people.totals.stubs_only > 0 && ` ${people.totals.stubs_only} not read yet.`}</>
+                ? <>{people.totals.listed} on this ISN
+                    {people.ourOffice && <> · {people.totals.in_our_office} in your office</>}
+                    {people.totals.stubs_only > 0 && <> · {people.totals.stubs_only} not read yet</>}</>
                 : 'Read the list from ISN to get started.'}
             </div>
+
+            {people?.offices?.length > 1 && (
+              <div style={{ marginTop: 10, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+                <span style={{ fontSize: 13.5, color: 'var(--text-2)' }}>Your office</span>
+                <select className="input" style={{ width: 'auto', minWidth: 220 }}
+                        value={people.ourOffice || ''}
+                        disabled={busy === 'office'}
+                        onChange={(e) => run('office', async () => {
+                          await api('/isn/connection', {
+                            method: 'PATCH', body: { isn_office_id: e.target.value || null },
+                          });
+                          await load();
+                          setNote(e.target.value
+                            ? 'Set. Orders and people from other branches are no longer shown.'
+                            : 'Showing every office on this ISN.');
+                        })}>
+                  <option value="">Every office on this ISN</option>
+                  {people.offices.map((o) => (
+                    <option key={o.isn_office_id} value={o.isn_office_id}>
+                      {o.name}{o.city ? ` — ${o.city}` : ''} ({o.people})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
           </div>
           <div style={{ marginLeft: 'auto', display: 'flex', gap: 10, alignItems: 'center' }}>
             {people?.unlinked > 0 && (
