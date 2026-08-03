@@ -192,17 +192,31 @@ export async function probe(path) {
   return out;
 }
 
-export const getFootprints = () => call('/orders/footprints');
+/**
+ * Footprints, for the whole company.
+ *
+ * Without `all` these are only the authenticating user's upcoming jobs, and an
+ * office account that never takes inspections has none. With it, ISN also
+ * fills in who each one belongs to — the inspector fields are documented as
+ * appearing only under that parameter, which is precisely what one set of
+ * office keys needs.
+ */
+export const getFootprints = () => call('/orders/footprints?all=true');
 export const dropFootprint = (id) => call(`/orders/footprint/${id}`, { method: 'DELETE' });
 export const getOrder = (id) => call(`/order/${id}`);
 export const getClient = (id) => call(`/client/${id}`);
 export const getAgent = (id) => call(`/agent/${id}`);
+export const getUser = (id) => call(`/user/${id}`);
 
-/** Whose keys are these? ISN scopes footprints to the authenticated user. */
+/** Whose keys are these? */
 export const getMe = () => call('/me');
 
 /** Every user on the ISN — inspectors, office, owners. */
 export const getUsers = () => call('/users');
+
+/** ISN unwraps most things into { status, <name>: … }. */
+export const unwrap = (payload, key) =>
+  (payload && typeof payload === 'object' && payload[key] !== undefined ? payload[key] : payload);
 
 /**
  * Every order, not just the ones belonging to whoever owns the keys.
@@ -213,7 +227,8 @@ export const getUsers = () => call('/users');
  * account is never assigned an inspection. /orders is company-wide, which is
  * what a back office actually needs.
  */
-export const getOrders = () => call('/orders');
+export const getOrders = (after) =>
+  call(`/orders${after ? `?after=${encodeURIComponent(after)}` : ''}`);
 
 // --------------------------------------------------------------- mapping
 
@@ -224,40 +239,86 @@ export function hasRadon(services, patterns) {
   return names.some((n) => patterns.some((p) => n.includes(p.toLowerCase())));
 }
 
+/**
+ * What radon was charged at.
+ *
+ * A booked service is {uuid, name} and carries no money; the fee entry beside
+ * it is where the amount lives. Both are named the same thing, so take the
+ * first radon line that actually has a price rather than the first one at all.
+ */
 export function radonFee(services) {
-  const hit = (services || []).find((s) =>
+  const named = (services || []).filter((s) =>
     String(s?.name ?? s?.service_name ?? '').toLowerCase().includes('radon'));
-  const raw = hit?.price ?? hit?.fee ?? hit?.amount;
-  return raw == null ? null : Number(raw);
+  for (const s of named) {
+    const raw = s?.amount ?? s?.price ?? s?.fee;
+    if (raw != null && raw !== '' && Number.isFinite(Number(raw))) return Number(raw);
+  }
+  return null;
 }
 
-/** Everything ISN calls something slightly different lands here. */
+const num = (v) => {
+  const n = Number(v);
+  return Number.isFinite(n) && String(v ?? '').trim() !== '' ? n : null;
+};
+const blank = (v) => (v === '' || v == null ? null : v);
+/** ISN returns booleans as the strings "yes" and "no". */
+const yes = (v) => String(v).toLowerCase() === 'yes' || v === true;
+
+/** A person's name, however this endpoint spells it. */
+const personName = (p) =>
+  blank(p?.display) ?? blank(p?.displayname) ??
+  ([p?.first ?? p?.firstname, p?.last ?? p?.lastname].filter(Boolean).join(' ') || null);
+
+/**
+ * An ISN order, in our words.
+ *
+ * Field names follow ISN's published schema: an inspection is `datetime`, the
+ * street is `address1`, and the inspector is `inspector1` — of ten slots, since
+ * an order can carry a whole crew. The first is the one whose day this job is
+ * on, and the rest are along for it.
+ */
 export function normalizeOrder(order, extras = {}) {
-  const addr = order.address || order.property || order || {};
+  const start = blank(order.datetime) ?? blank(order.scheduleddatetime) ?? null;
+  const minutes = num(order.duration);
+  const crew = Array.from({ length: 10 }, (_, i) => blank(order[`inspector${i + 1}`]))
+    .filter(Boolean);
+
   return {
-    isn_order_id: String(order.id ?? order.order_id ?? order.orderId),
-    order_number: order.order_number ?? order.orderNumber ?? null,
-    order_url: order.url ?? order.order_url ?? null,
-    scheduled_start: order.inspection_date ?? order.start ?? order.scheduled_start ?? null,
-    scheduled_end: order.end ?? order.scheduled_end ?? null,
-    inspector_isn_id: order.inspector_id ?? order.inspectorId ?? null,
-    inspector_name: order.inspector_name ?? order.inspector ?? null,
-    property_address: addr.address ?? addr.street ?? order.address_line ?? null,
-    property_city: addr.city ?? null,
-    property_state: addr.state ?? null,
-    property_zip: addr.zip ?? addr.postal_code ?? null,
-    square_feet: order.square_feet ?? order.sqft ?? null,
-    year_built: order.year_built ?? null,
-    foundation_type: order.foundation ?? order.foundation_type ?? null,
-    client_name: extras.client?.name
-      ?? ([extras.client?.first_name, extras.client?.last_name].filter(Boolean).join(' ') || null),
-    client_phone: extras.client?.phone ?? extras.client?.mobile ?? null,
-    client_email: extras.client?.email ?? null,
-    agent_name: extras.agent?.name
-      ?? ([extras.agent?.first_name, extras.agent?.last_name].filter(Boolean).join(' ') || null),
-    agent_email: extras.agent?.email ?? null,
-    services: order.services ?? order.fees ?? [],
-    order_status: order.status ?? null,
+    isn_order_id: String(order.id),
+    order_number: blank(order.oid) != null ? String(order.oid) : blank(order.reportnumber),
+    order_url: blank(order.mapurl),
+    scheduled_start: start,
+    scheduled_end: start && minutes ? new Date(new Date(start).getTime() + minutes * 60000) : null,
+
+    // The lead inspector. extras.inspector fills in the name, because the
+    // order only ever carries ids.
+    inspector_isn_id: crew[0] ?? null,
+    inspector_name: personName(extras.inspector) ?? blank(extras.inspectorName),
+
+    property_address: [blank(order.address1), blank(order.address2)].filter(Boolean).join(' ') || null,
+    property_city: blank(order.city),
+    property_state: blank(order.stateabbreviation) ?? blank(order.state),
+    property_zip: blank(order.zip),
+    square_feet: num(order.squarefeet),
+    year_built: num(order.yearbuilt),
+    foundation_type: blank(order.foundation),
+
+    client_name: personName(extras.client),
+    client_phone: blank(extras.client?.mobilephone) ?? blank(extras.client?.homephone)
+      ?? blank(extras.client?.workphone),
+    client_email: blank(extras.client?.email),
+    agent_name: personName(extras.agent),
+    agent_email: blank(extras.agent?.email),
+
+    // Services are what was booked; fees are what it costs. Radon can be
+    // written up as either, so keep both and let the matcher look at all of it.
+    services: [...(order.services || []), ...(order.fees || [])],
+
+    order_status: yes(order.canceled) ? 'Canceled'
+      : yes(order.complete) ? 'Complete'
+      : start ? 'Scheduled' : 'Unscheduled',
+
+    crew,
   };
 }
 
@@ -291,8 +352,11 @@ export async function syncOnce({ source = 'schedule' } = {}) {
     //
     // Footprints are still consumed and deleted, because ISN expects that and
     // they pile up otherwise.
+    const window = Number(c.pull_window_days || 14);
+    const after = new Date(Date.now() - window * 86400000).toISOString();
+
     const [everyOrder, footprints] = await Promise.all([
-      getOrders().then((x) => extractList(x, 'orders')).catch((e) => {
+      getOrders(after).then((x) => extractList(x, 'orders')).catch((e) => {
         failures.push({ stage: 'orders', error: e.message });
         return [];
       }),
@@ -303,28 +367,34 @@ export async function syncOnce({ source = 'schedule' } = {}) {
     ]);
     counts.footprints = footprints.length;
 
-    const idOf = (x) => x.order_id ?? x.orderId ?? x.id ?? x.orderID;
-    const withinWindow = (x) => {
-      const when = x.scheduled_start ?? x.inspection_date ?? x.date ?? x.start;
-      if (!when) return true;                       // no date on the stub — decide from the order
+    const withinWindow = (when) => {
+      if (!when) return true;                    // no date on the stub — decide from the order
       const days = (new Date(when) - Date.now()) / 86400000;
-      return days >= -Number(c.pull_window_days || 14) && days <= Number(c.pull_window_days || 14);
+      return days >= -window && days <= window;
     };
 
-    // one pass per order, whichever source named it
+    // One pass per order, whichever source named it. A footprint points at its
+    // order through `order`; an order names itself through `id`.
     const work = new Map();
-    for (const o of everyOrder) if (withinWindow(o)) work.set(String(idOf(o)), null);
-    for (const fp of footprints) work.set(String(idOf(fp)), fp.id ?? fp.footprint_id ?? null);
+    for (const o of everyOrder) {
+      if (o?.id && withinWindow(o.datetime)) work.set(String(o.id), null);
+    }
+    for (const fp of footprints) {
+      if (fp?.order) work.set(String(fp.order), fp.id ?? null);
+    }
 
     for (const [orderId, footprintId] of work) {
       try {
-        const order = await getOrder(orderId);
-        const [client, agent] = await Promise.all([
-          order.client_id ? getClient(order.client_id).catch(() => null) : null,
-          order.agent_id ? getAgent(order.agent_id).catch(() => null) : null,
+        const order = unwrap(await getOrder(orderId), 'order');
+        const leadInspector = Array.from({ length: 10 }, (_, i) => order[`inspector${i + 1}`])
+          .find((x) => x);
+        const [client, agent, inspector] = await Promise.all([
+          order.client ? getClient(order.client).then((x) => unwrap(x, 'client')).catch(() => null) : null,
+          order.buyersagent ? getAgent(order.buyersagent).then((x) => unwrap(x, 'agent')).catch(() => null) : null,
+          leadInspector ? getUser(leadInspector).then((x) => unwrap(x, 'user')).catch(() => null) : null,
         ]);
 
-        const o = normalizeOrder(order, { client, agent });
+        const o = normalizeOrder(order, { client, agent, inspector });
         const radon = hasRadon(o.services, c.radon_service_match);
 
         const saved = await tx(async (t) => {

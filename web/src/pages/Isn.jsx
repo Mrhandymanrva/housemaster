@@ -31,6 +31,7 @@ export default function Isn() {
           employee_id: employeeId || null,
           full_name: u.name,
           email: u.email,
+          role: u.isInspector ? 'Inspector' : 'CSR',
         },
       });
       await load();

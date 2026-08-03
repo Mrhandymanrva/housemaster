@@ -3,7 +3,7 @@ import { Router } from 'express';
 import { q, tx } from '../lib/db.js';
 import { wrap, bad } from '../lib/http.js';
 import { requireAuth, requireRole } from '../lib/auth.js';
-import { syncOnce, probe, getMe, getUsers, extractList } from '../integrations/isn.js';
+import { syncOnce, probe, getMe, getUsers, extractList, unwrap } from '../integrations/isn.js';
 
 const r = Router();
 
@@ -46,7 +46,7 @@ r.get('/probe', requireAuth, requireRole('admin'), wrap(async (_req, res) => {
  */
 r.get('/roster', requireAuth, requireRole('admin'), wrap(async (_req, res) => {
   const [me, users, staff] = await Promise.all([
-    getMe().catch((e) => ({ error: e.message })),
+    getMe().then((x) => unwrap(x, 'me')).catch((e) => ({ error: e.message })),
     getUsers().then((x) => extractList(x, 'users')),
     q(`SELECT id, full_name, email, job_title, isn_user_id FROM employees WHERE status = 'Active'`),
   ]);
@@ -56,18 +56,23 @@ r.get('/roster', requireAuth, requireRole('admin'), wrap(async (_req, res) => {
   );
   const byIsnId = new Map(staff.rows.filter((e) => e.isn_user_id).map((e) => [e.isn_user_id, e]));
 
+  // ISN's User: firstname, lastname, displayname, emailaddress, and inspector
+  // and owner as booleans. `show` false means deleted.
+  const named = (u) =>
+    u.displayname || [u.firstname, u.lastname].filter(Boolean).join(' ') || u.emailaddress;
+
   const roster = users.map((u) => {
-    const isnId = String(u.id ?? u.user_id ?? u.userID ?? '');
-    const email = (u.email ?? u.email_address ?? '').toLowerCase() || null;
-    const name = u.name ?? [u.first_name, u.last_name].filter(Boolean).join(' ') ?? null;
+    const isnId = String(u.id ?? '');
+    const email = (u.emailaddress || '').toLowerCase() || null;
     const linked = byIsnId.get(isnId) || null;
     const suggestion = !linked && email ? byEmail.get(email) || null : null;
     return {
       isn_user_id: isnId,
-      name: name || email || 'Unnamed',
+      name: named(u) || 'Unnamed',
       email,
-      role: u.role ?? u.user_type ?? u.type ?? null,
-      inactive: u.active === false || u.status === 'inactive',
+      role: u.owner ? 'Owner' : u.inspector ? 'Inspector' : 'Office',
+      isInspector: !!u.inspector,
+      inactive: u.show === false,
       employee_id: linked?.id ?? null,
       employee_name: linked?.full_name ?? null,
       suggested_employee_id: suggestion?.id ?? null,
@@ -76,7 +81,7 @@ r.get('/roster', requireAuth, requireRole('admin'), wrap(async (_req, res) => {
   });
 
   res.json({
-    keysBelongTo: me?.error ? null : (me?.name ?? me?.email ?? me?.user?.name ?? null),
+    keysBelongTo: me?.error ? null : (named(me) || null),
     meError: me?.error ?? null,
     roster,
     employees: staff.rows,
@@ -102,10 +107,10 @@ r.post('/roster/adopt', requireAuth, requireRole('admin'), wrap(async (req, res)
       if (!full_name?.trim()) throw bad('A person needs a name.');
       const made = await c.query(
         `INSERT INTO employees (full_name, email, role, status)
-         VALUES ($1, $2, 'Inspector', 'Active')
+         VALUES ($1, $2, COALESCE($3, 'Inspector'), 'Active')
          ON CONFLICT (email) DO UPDATE SET full_name = EXCLUDED.full_name
          RETURNING id`,
-        [full_name.trim(), email || null]
+        [full_name.trim(), email || null, req.body.role || null]
       );
       id = made.rows[0].id;
     }
