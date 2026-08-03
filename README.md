@@ -168,10 +168,27 @@ is interim: `attachments` exists as a table and the object storage behind it
 does not, so photos live in the submission payload until it is wired.
 
 `field/qa-guard.js` is the duplicate rule as the phone runs it — a pure module
-with no imports, so the app, the service worker and the tests all share one copy.
-`node field/qa-guard.test.js` runs its 18 checks. **It is not yet wired into
-`field/app/`** — the radon forms render and submit, but the phone does not
-enforce the duplicate pair. The API and the database still do.
+with no imports, so the app, the tests and the phone all share one copy. The
+server hands that same file out at `/phone/qa-guard.js` rather than keeping a
+second one. `node field/qa-guard.test.js` runs its 18 checks.
+
+The app decides the moment the tech picks the monitor. A set that owes a
+duplicate gets a red banner and three more questions — second monitor, inches
+apart, one photo of both — and will not send without them, or if the duplicate
+is the same unit as the primary, or if the two are more than a hand's width
+apart. An ordinary set says so in green and asks nothing extra.
+
+Every uncertainty resolves toward taking two: a monitor this phone has never
+synced, a ledger older than two weeks, more sets placed offline than the
+interval. Each submission carries what the phone believed — the sequence it
+thought it was on, when it last synced, whether it was offline — so a set that
+turns out to have been wrong arrives with its reason attached instead of
+leaving an unexplained gap.
+
+A duplicate placed but not yet uploaded is the one thing the local ledger
+cannot hold: `merge()` lets the server's count win. The consequence is that the
+phone may ask for one more pair than it owed, which is the direction this whole
+module leans anyway.
 
 `field/prototype.html` opens in any browser and shows what the tech sees: the
 flagged tile, the red banner, the extra questions, and a send button that will
@@ -214,6 +231,10 @@ with and without it.
 
 File upload storage (the `attachments` table is there, the S3/R2 wiring is not,
 so phone photos sit in the submission payload meanwhile), CSV import, email and
-SMS reminders on the compliance calendar, the duplicate-pair rule inside the
-phone app, and Setup → Screens for renaming and reordering columns — its
-endpoint is live and nothing calls it.
+SMS reminders on the compliance calendar, and Setup → Screens for renaming and
+reordering columns — its endpoint is live and nothing calls it.
+
+A radon deployment sent from the phone lands in the review inbox as a
+submission; it does not yet create the `radon_tests` row. The duplicate rule is
+enforced on the way out of the phone and by the database when a set is created,
+but the two paths do not meet — the office still opens the set from the desktop.

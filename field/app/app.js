@@ -9,6 +9,8 @@
  * losing signal mid-form costs nothing. Submissions queue and go when service
  * comes back, keyed by a uuid the phone makes, so a retry cannot double-post.
  */
+import { decide, validateDeployment, advance, merge } from './qa-guard.js';
+
 const API = '/api';
 const LS = {
   token: 'hm_field_token',
@@ -16,6 +18,7 @@ const LS = {
   config: 'hm_field_config',
   reminders: 'hm_field_reminders',
   options: 'hm_field_options',
+  ledger: 'hm_field_ledger',
   queue: 'hm_field_queue',
   device: 'hm_field_device',
 };
@@ -31,6 +34,7 @@ const state = {
   modules: read(LS.config, []),
   reminders: read(LS.reminders, []),
   options: read(LS.options, {}),
+  ledger: read(LS.ledger, []),
   route: { name: 'home' },
   draft: {},
   busy: false,
@@ -94,9 +98,10 @@ async function flush() {
 
 // --------------------------------------------------------------- loading
 async function refresh() {
-  const [cfg, rem] = await Promise.allSettled([
+  const [cfg, rem, led] = await Promise.allSettled([
     api('/ops/field/config'),
     api('/ops/field/reminders'),
+    api('/radon/ledger'),
   ]);
   if (cfg.status === 'fulfilled') {
     state.modules = cfg.value.modules || [];
@@ -107,7 +112,28 @@ async function refresh() {
     state.reminders = rem.value.reminders || [];
     write(LS.reminders, state.reminders);
   }
+  // Fold the server's count into the local one. merge() keeps sets this phone
+  // has queued but not yet sent, because the server has not seen those.
+  if (led.status === 'fulfilled') {
+    state.ledger = merge(state.ledger, led.value.devices || [], led.value.syncedAt);
+    write(LS.ledger, state.ledger);
+  }
   render();
+}
+
+/**
+ * Where a module stands on the duplicate rule.
+ *
+ *   none     — this form has nothing to do with radon QA
+ *   pending  — it does, but no monitor is chosen yet, so there is nothing to decide
+ *   decided  — qa-guard has ruled on the monitor in hand
+ */
+function qaContext(mod) {
+  if (mod.qa_rule !== 'radon_duplicate') return { mode: 'none' };
+  const id = state.draft.primary_device;
+  if (!id) return { mode: 'pending' };
+  const entry = state.ledger.find((e) => e.equipmentId === id) || null;
+  return { mode: 'decided', entry, qa: decide(entry) };
 }
 
 const REF_ENTITY = {
@@ -162,13 +188,29 @@ const dueText = (d) => {
   return `in ${d} days`;
 };
 
-const visible = (f, draft) => {
+/**
+ * A question tagged {"qa":"duplicate_required"} only appears on a set that owes
+ * a duplicate. On a form with no QA rule — retrieval, where the phone cannot
+ * know offline whether that set went out as a pair — the question is shown
+ * anyway but not insisted on, so a duplicate reading is never impossible to
+ * record and an ordinary one is never blocked.
+ */
+const visible = (f, draft, ctx = { mode: 'none' }) => {
   const rule = f.visible_if;
-  if (!rule || !rule.field) return true;
+  if (!rule) return true;
+  if (rule.qa === 'duplicate_required') {
+    if (ctx.mode === 'decided') return ctx.qa.requiresDuplicate;
+    return ctx.mode === 'none';
+  }
+  if (!rule.field) return true;
   const v = draft[rule.field];
   if ('equals' in rule) return v === rule.equals;
   return !!v;
 };
+
+/** Optional when we are only showing it in case it is wanted. */
+const requiredHere = (f, ctx) =>
+  f.required && !(f.visible_if?.qa && ctx.mode === 'none');
 
 const el = (html) => {
   const t = document.createElement('template');
@@ -319,9 +361,16 @@ function formScreen(mod) {
     return wrap;
   }
 
+  const ctx = qaContext(mod);
+  if (ctx.mode === 'pending') {
+    body.append(el(`<div class="note">Pick the monitor first. This phone works out
+      whether the set needs a duplicate as soon as it knows which unit you have.</div>`));
+  }
+  if (ctx.mode === 'decided') body.append(qaBanner(ctx.qa));
+
   for (const f of fields) {
-    if (!visible(f, state.draft)) continue;
-    body.append(fieldControl(f));
+    if (!visible(f, state.draft, ctx)) continue;
+    body.append(fieldControl(f, ctx));
   }
 
   const foot = el('<div class="foot"></div>');
@@ -335,10 +384,31 @@ function formScreen(mod) {
   return wrap;
 }
 
-function fieldControl(f) {
+/** The one thing the tech has to read before they walk into the house. */
+function qaBanner(qa) {
+  if (qa.requiresDuplicate) {
+    return el(`
+      <div class="qa stop">
+        <div class="qa-title">${esc(qa.short)}</div>
+        <div class="qa-body">${esc(qa.reason)}</div>
+        ${qa.confident ? '' :
+          '<div class="qa-note">This phone is not certain where the monitor is in its cycle, '
+          + 'so it is asking for a pair. An extra duplicate costs one monitor-day. A missing '
+          + 'one cannot be filled in after the house is tested.</div>'}
+      </div>`);
+  }
+  return el(`
+    <div class="qa ok">
+      <div class="qa-title">${esc(qa.short)}</div>
+      <div class="qa-body">${esc(qa.reason)}</div>
+    </div>`);
+}
+
+function fieldControl(f, ctx = { mode: 'none' }) {
+  const need = requiredHere(f, ctx);
   const box = el(`
     <div class="field">
-      <label for="f_${esc(f.key)}">${esc(f.label)}${f.required ? ' <span class="need">— needed</span>' : ''}</label>
+      <label for="f_${esc(f.key)}">${esc(f.label)}${need ? ' <span class="need">— needed</span>' : ''}</label>
     </div>`);
   const set = (v) => { state.draft[f.key] = v; };
   const t = f.input_type;
@@ -364,7 +434,11 @@ function fieldControl(f) {
       sel.disabled = true;
       sel.firstElementChild.textContent = 'Nothing to choose from yet';
     }
-    sel.onchange = (e) => set(e.target.value);
+    // Redraw on a pick, not just on a keystroke: choosing the monitor is what
+    // decides whether this set owes a duplicate, and the questions that come
+    // with it have to appear the moment it is chosen. A select commits a whole
+    // value at once, so redrawing here costs no half-typed input.
+    sel.onchange = (e) => { set(e.target.value); render(); };
     box.append(sel);
 
   } else if (t === 'photo' || t === 'signature') {
@@ -409,14 +483,32 @@ function fieldControl(f) {
 
 // ---------------------------------------------------------------- submit
 async function submit(mod, fields) {
-  const shown = fields.filter((f) => visible(f, state.draft));
-  const missing = shown.filter((f) => f.required &&
+  const ctx = qaContext(mod);
+  const shown = fields.filter((f) => visible(f, state.draft, ctx));
+  const missing = shown.filter((f) => requiredHere(f, ctx) &&
     (state.draft[f.key] === undefined || state.draft[f.key] === '' ||
      (f.input_type === 'toggle' && state.draft[f.key] !== true)));
   if (missing.length) {
     state.err = `Still needed: ${missing.map((f) => f.label).join(', ')}`;
     render();
     return;
+  }
+
+  // The duplicate rule, decided on this phone with whatever it last knew.
+  // Nothing leaves until it passes — an incomplete pair is not recoverable
+  // once the tech has driven away.
+  if (ctx.mode === 'decided') {
+    const check = validateDeployment(ctx.entry, {
+      primary_device: state.draft.primary_device,
+      duplicate_device: state.draft.duplicate_device,
+      duplicate_distance: state.draft.duplicate_distance,
+      duplicate_photo: state.draft.duplicate_photo,
+    });
+    if (!check.ok) {
+      state.err = check.problems.join(' ');
+      render();
+      return;
+    }
   }
 
   // A ref field that points at the module's own entity and maps to no column
@@ -426,6 +518,22 @@ async function submit(mod, fields) {
 
   const payload = {};
   for (const f of shown) if (state.draft[f.key] !== undefined) payload[f.key] = state.draft[f.key];
+
+  // What the phone believed when the tech hit send. If it turns out to have
+  // been wrong — an offline set that actually owed a duplicate — this is what
+  // lets the office see why, rather than finding a hole with no explanation.
+  if (ctx.mode === 'decided') {
+    payload._qa = {
+      believed_sequence: ctx.qa.sequence,
+      interval: ctx.qa.interval,
+      confident: ctx.qa.confident,
+      duplicate_required: ctx.qa.requiresDuplicate,
+      duplicate_placed: !!state.draft.duplicate_device,
+      device_synced_at: ctx.entry?.syncedAt ?? null,
+      captured_offline: !navigator.onLine,
+      queued_at: new Date().toISOString(),
+    };
+  }
 
   const body = {
     module_key: mod.key,
@@ -458,12 +566,25 @@ async function submit(mod, fields) {
     queue.add(body);
     state.flash = `${mod.name} saved. It goes out when you have signal.`;
   }
+  // The count moves whether or not that went over the wire, so the next set
+  // off this phone is numbered right even with no signal all day. A duplicate
+  // resets the cycle — including one placed out of caution that was not owed.
+  if (ctx.mode === 'decided' && ctx.entry) {
+    const placedDuplicate = !!state.draft.duplicate_device;
+    state.ledger = state.ledger.map((e) =>
+      e.equipmentId === ctx.entry.equipmentId ? advance(e, { placedDuplicate }) : e);
+    write(LS.ledger, state.ledger);
+  }
+
   state.busy = false;
   state.draft = {};
   state.route = { name: 'home' };
   render();
-  flush();
-  refresh().catch(() => {});
+  // Drain the queue before re-reading the ledger. merge() lets the server's
+  // count win, so a set that arrives first comes back already counted; asking
+  // for the ledger while that set is still sitting in the queue would make the
+  // phone forget a duplicate it just placed and ask for another one.
+  flush().finally(() => refresh().catch(() => {}));
 }
 
 // ---------------------------------------------------------------- render

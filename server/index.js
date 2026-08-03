@@ -46,6 +46,16 @@ app.use('/api/records', recordRoutes);
 // and no second host to configure. The service worker sits at /phone/sw.js,
 // which is what scopes it to /phone/ and nothing above it.
 const phone = path.join(__dirname, '..', 'field', 'app');
+
+// The duplicate rule lives one directory up because the tests and the desktop
+// share it. Serving it inside the phone's scope keeps that single copy —
+// the alternative is a build step whose only job is to duplicate one file.
+app.get('/phone/qa-guard.js', (_req, res) => {
+  res.type('application/javascript');
+  res.setHeader('Cache-Control', 'public, max-age=3600');
+  res.sendFile(path.join(__dirname, '..', 'field', 'qa-guard.js'));
+});
+
 app.use('/phone', express.static(phone, {
   index: 'index.html',
   setHeaders(res, filePath) {

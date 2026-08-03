@@ -91,6 +91,20 @@ body {
 .accent-amber .dot { background: var(--amber-bg); }
 .accent-green .dot { background: var(--green-bg); }
 
+/* -------------------------------------------------------- the duplicate rule
+   A tech reads this standing in a doorway with a case in one hand. The stop
+   version is loud on purpose: it is the difference between one monitor and
+   two, and there is no fixing it once they have driven off. */
+.qa { border-radius: var(--r); padding: 15px 16px; margin-bottom: 20px; }
+.qa-title { font-weight: 700; font-size: 17px; margin-bottom: 4px; }
+.qa-body { font-size: 14.5px; line-height: 1.4; }
+.qa-note { font-size: 13px; margin-top: 9px; opacity: .85; }
+.qa.stop {
+  background: var(--red); color: #fff;
+  box-shadow: 0 6px 18px -8px rgba(211, 58, 44, .8);
+}
+.qa.ok { background: var(--green-bg); color: #14603F; }
+
 /* ------------------------------------------------------------------ form */
 .field { margin-bottom: 18px; }
 .field label { display: block; font-weight: 600; font-size: 15px; margin-bottom: 6px; }
