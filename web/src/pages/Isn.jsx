@@ -31,10 +31,13 @@ export default function Isn() {
       const out = await api('/isn/roster/refresh', { method: 'POST', body: {} });
       setWhose(out.keysBelongTo);
       await load();
-      setNote(
-        `Read ${out.detailed} of ${out.listed} people${out.skipped ? `, ${out.skipped} unchanged` : ''}` +
-        `${out.failures?.length ? `. ${out.failures.length} could not be read.` : '.'}`
-      );
+      setNote([
+        `Read ${out.detailed} ${out.detailed === 1 ? 'person' : 'people'}.`,
+        out.deleted ? `${out.deleted} deleted in ISN, skipped.` : '',
+        out.unchanged ? `${out.unchanged} unchanged since last time.` : '',
+        out.remaining ? `${out.remaining} left — press it again.` : '',
+        out.failures?.length ? `${out.failures.length} could not be read.` : '',
+      ].filter(Boolean).join(' '));
     });
 
   const adopt = (u, employeeId) =>

@@ -105,7 +105,10 @@ r.get('/roster', requireAuth, requireRole('admin'), wrap(async (req, res) => {
 r.post('/roster/refresh', requireAuth, requireRole('admin'), wrap(async (req, res) => {
   const [me, out] = await Promise.all([
     getMe().then((x) => unwrap(x, 'me')).catch((e) => ({ error: e.message })),
-    refreshUsers({ force: req.body?.force === true }),
+    refreshUsers({
+      force: req.body?.force === true,
+      includeDeleted: req.body?.includeDeleted === true,
+    }),
   ]);
   res.json({
     ...out,

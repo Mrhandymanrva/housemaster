@@ -222,7 +222,8 @@ export const getUsers = () => call('/users');
  * since we last read them is skipped, which makes the second refresh cheap
  * even when the first one is 250 calls.
  */
-export async function refreshUsers({ force = false, concurrency = 6 } = {}) {
+export async function refreshUsers({ force = false, concurrency = 6, includeDeleted = false,
+                                     limit = 500 } = {}) {
   const stubs = extractList(await getUsers(), 'users');
 
   const known = new Map(
@@ -232,15 +233,38 @@ export async function refreshUsers({ force = false, concurrency = 6 } = {}) {
 
   const seen = [];
   const wanted = [];
+  let deleted = 0;
   for (const s of stubs) {
     const id = String(s.id ?? '');
     if (!id) continue;
     seen.push(id);
+
+    // ISN keeps everyone who ever had an account. `show: false` is a deleted
+    // user, and reading their details costs a call to learn the name of
+    // somebody who left years ago.
+    const visible = s.show !== false;
+    if (!visible && !includeDeleted) {
+      deleted += 1;
+      await q(
+        `INSERT INTO isn_users (isn_user_id, visible, isn_modified, last_seen_at)
+         VALUES ($1, false, $2, now())
+         ON CONFLICT (isn_user_id) DO UPDATE SET visible = false, last_seen_at = now()`,
+        [id, s.modified || null]
+      );
+      continue;
+    }
+
     const mine = known.get(id);
     const unchanged = mine?.detail_pulled_at
       && String(mine.isn_modified?.toISOString?.() ?? mine.isn_modified ?? '') === String(s.modified ?? '');
-    if (force || !unchanged) wanted.push({ id, modified: s.modified ?? null, visible: s.show !== false });
+    if (force || !unchanged) wanted.push({ id, modified: s.modified ?? null, visible });
   }
+
+  // Newest first, so a run that hits the ceiling has read the people most
+  // likely to still be working here.
+  wanted.sort((a, b) => String(b.modified ?? '').localeCompare(String(a.modified ?? '')));
+  const remaining = Math.max(0, wanted.length - limit);
+  wanted.length = Math.min(wanted.length, limit);
 
   let pulled = 0;
   const failures = [];
@@ -288,7 +312,14 @@ export async function refreshUsers({ force = false, concurrency = 6 } = {}) {
     await q(`UPDATE isn_users SET visible = false WHERE isn_user_id <> ALL($1::text[])`, [seen]);
   }
 
-  return { listed: stubs.length, detailed: pulled, skipped: stubs.length - wanted.length, failures };
+  return {
+    listed: stubs.length,
+    deleted,
+    detailed: pulled,
+    unchanged: stubs.length - deleted - wanted.length - remaining,
+    remaining,
+    failures,
+  };
 }
 
 /** ISN unwraps most things into { status, <name>: … }. */
