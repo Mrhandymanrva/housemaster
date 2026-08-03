@@ -60,8 +60,18 @@ themselves in `schema_migrations`, so deploys are safe to repeat.
 
 1. Push this repo to GitHub.
 2. In Railway: **New Project → Deploy from GitHub repo**.
-3. Add the **Postgres** plugin to the project. `DATABASE_URL` is injected for you.
-4. Set one variable: `JWT_SECRET` (any 64 random characters).
+3. Add **Postgres** to the project: **+ Create → Database → Add PostgreSQL**.
+4. Set two variables on the app service — Railway does *not* hand a database's
+   URL to your other services, you have to point at it:
+
+   | Variable | Value |
+   | --- | --- |
+   | `DATABASE_URL` | `${{Postgres.DATABASE_URL}}` — a reference, typed literally, braces and all. Use your database service's own name if it is not `Postgres`. |
+   | `JWT_SECRET` | `${{ secret(64) }}`, which Railway fills in with 64 random characters. |
+
+   Without the first one the app falls back to a local Postgres that does not
+   exist inside the container, and the deploy fails its healthcheck with nothing
+   listening. The deploy log says which address it tried.
 5. Deploy. Railway reads `railway.json`, builds the Dockerfile, and health-checks
    `/api/health`.
 6. Open the URL and create the owner account on the sign-in screen. Do this as
