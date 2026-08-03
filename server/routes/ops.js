@@ -3,6 +3,22 @@ import { q, tx } from '../lib/db.js';
 import { wrap, bad, notFound } from '../lib/http.js';
 import { requireAuth, requireRole } from '../lib/auth.js';
 import { getEntity, bustCatalog } from '../catalog/sync.js';
+import { createRadonSet, radonSetFromSubmission } from '../radonIntake.js';
+
+/**
+ * Some records are more than a row.
+ *
+ * Most submissions map answers onto columns and that is the whole job. A radon
+ * set is a test, its monitors, and a custody event for each — and a trigger
+ * that decides whether it may reach Deployed. Entities that need that kind of
+ * assembly name a builder here; everything else takes the generic path.
+ */
+const INTAKE = {
+  radon_tests: async (c, sub) => {
+    const { test } = await createRadonSet(c, radonSetFromSubmission(sub, sub.payload || {}));
+    return test.id;
+  },
+};
 
 const r = Router();
 
@@ -195,9 +211,23 @@ r.post('/field/submissions', requireAuth, wrap(async (req, res) => {
      gps?.lat ?? null, gps?.lng ?? null, captured_at || null]
   );
 
+  // The submission is already saved. If turning it into a record fails — a
+  // duplicate the database refuses, a monitor that has since been retired —
+  // that is not the phone's problem to retry: re-sending would only fail the
+  // same way, and the tech has driven off. It stays pending with the reason on
+  // it, in front of the office, and the phone is told it arrived.
   let applied = null;
-  if (mod.auto_apply) applied = await applySubmission(ins.rows[0].id, req.user.id);
-  res.status(201).json({ submission: applied || ins.rows[0] });
+  let couldNotApply = null;
+  if (mod.auto_apply) {
+    try {
+      applied = await applySubmission(ins.rows[0].id, req.user.id);
+    } catch (err) {
+      couldNotApply = err.message;
+      await q(`UPDATE field_submissions SET review_note = $2 WHERE id = $1`,
+        [ins.rows[0].id, `Could not be filed automatically: ${err.message}`]);
+    }
+  }
+  res.status(201).json({ submission: applied || ins.rows[0], couldNotApply });
 }));
 
 r.get('/field/submissions', requireAuth, wrap(async (req, res) => {
@@ -240,7 +270,11 @@ async function applySubmission(id, userId) {
 
     let wroteTo = sub.target_id;
 
-    if (sub.target_entity) {
+    const build = INTAKE[sub.target_entity];
+    if (build && !sub.target_id) {
+      wroteTo = await build(c, sub);
+      await c.query(`UPDATE field_submissions SET target_id = $2 WHERE id = $1`, [id, wroteTo]);
+    } else if (sub.target_entity) {
       const entity = await getEntity(sub.target_entity);
       const mapped = (await c.query(
         `SELECT key, maps_to_column FROM field_form_fields
@@ -291,6 +325,9 @@ async function applySubmission(id, userId) {
       [userId, sub.target_entity, wroteTo, JSON.stringify(sub.payload)]
     );
     await c.query('SELECT refresh_compliance()');
+    // A set opened from a phone has its own dates to keep — closed-house hours,
+    // retrieval due — and the desktop route refreshes these for the same reason.
+    if (build) await c.query('SELECT refresh_compliance_radon()');
     return out;
   });
 }

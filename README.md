@@ -163,6 +163,19 @@ the odometer on the van. One that names none creates a record instead — a van
 maintenance log becomes a new row in `vehicle_maintenance` rather than an edit
 to the van.
 
+Some records are more than a row. A radon deployment is a test, its monitors,
+and a custody event for each, so `radon_tests` names a builder in the `INTAKE`
+table in `server/routes/ops.js` and the set is assembled by the same
+`radonIntake.js` the desktop uses. A set opened in a driveway and one opened at
+a desk are the same set, made the same way — same sequence number, same custody
+trail, same trigger deciding whether it may reach Deployed.
+
+That module applies on arrival rather than waiting for review: chain of custody
+starts in the house, not when somebody reaches the inbox. If the database
+refuses it anyway — drift, a retired monitor — the submission stays pending
+with the reason written on it and the phone is still told it arrived. Re-sending
+would only fail the same way, and by then the tech has driven off.
+
 Photos ride inside the submission, downscaled to 1024px JPEG on the phone. That
 is interim: `attachments` exists as a table and the object storage behind it
 does not, so photos live in the submission payload until it is wired.
@@ -234,7 +247,7 @@ so phone photos sit in the submission payload meanwhile), CSV import, email and
 SMS reminders on the compliance calendar, and Setup → Screens for renaming and
 reordering columns — its endpoint is live and nothing calls it.
 
-A radon deployment sent from the phone lands in the review inbox as a
-submission; it does not yet create the `radon_tests` row. The duplicate rule is
-enforced on the way out of the phone and by the database when a set is created,
-but the two paths do not meet — the office still opens the set from the desktop.
+Photos are the open one: a radon set opened from a phone records where its
+photos live (`field_submission:<id>#placement_photo`) rather than a file,
+because there is no file store to put them in yet. Wiring object storage is one
+line in `radonIntake.js` and a migration to rewrite the existing refs.
