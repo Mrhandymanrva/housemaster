@@ -21,12 +21,19 @@
   --text-2: #56657A;
   --text-3: #8A97A8;
 
-  /* HouseMaster green. Branding only — the logo mark, the active tab, the
-     button you press to commit. Red stays red: it means overdue, or stop. A
-     company whose brand colour is also its alarm colour has neither. */
-  --brand:    #00713C;
-  --brand-bg: #E4F2EA;
-  --brand-2:  #005C31;
+  /* HouseMaster green, taken off the business card: CMYK 83.5 / 18.4 / 64 / 2.7,
+     which converts to #29CA59. That is --brand-bright, and it is used only for
+     flat fills with nothing on top: white text on it is 2.17:1, which a tech
+     cannot read on a phone in a driveway.
+     --brand is the same hue darkened until white clears 4.5:1, and it carries
+     everything with a label on it — the mark, the active tab, the button you
+     press to commit.
+     Red did not move. It means overdue, or stop. A company whose brand colour
+     is also its alarm colour has neither. */
+  --brand-bright: #29CA59;
+  --brand:        #1B873C;
+  --brand-bg:     #EAFAEE;
+  --brand-2:      #176F31;
 
   --red:      #D33A2C;
   --red-bg:   #FDECEA;

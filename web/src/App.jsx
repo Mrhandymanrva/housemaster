@@ -13,6 +13,7 @@ import Radon from './pages/Radon.jsx';
 import Inbox from './pages/Inbox.jsx';
 import Team from './pages/Team.jsx';
 import Setup from './pages/Setup.jsx';
+import Isn from './pages/Isn.jsx';
 
 /* Where you can go. `min` hides a destination from anyone below that role. */
 const NAV = [
@@ -22,6 +23,7 @@ const NAV = [
   { key: 'records',   label: 'Records',         icon: 'table' },
   { key: 'inbox',     label: 'From the field',  icon: 'inbox' },
   { key: 'field',     label: 'Phone app',       icon: 'phone' },
+  { key: 'isn',       label: 'ISN link',        icon: 'app', min: 'office' },
   { key: 'setup',     label: 'Dropdown lists',  icon: 'settings', min: 'admin' },
   { key: 'team',      label: 'Logins',          icon: 'users', min: 'admin' },
 ];
@@ -37,6 +39,7 @@ const PAGE = {
   inbox:     ['From the field', 'What your people sent in from their phones, waiting on you.'],
   field:     ['Phone app', 'Decide what your people see on their phones. Changes show up the next time they open it.'],
   team:      ['Logins', 'Who can sign in, and what each of them is allowed to do.'],
+  isn:       ['ISN link', 'Where the jobs come from, and which inspector is which.'],
   setup:     ['Dropdown lists', 'The choices behind every dropdown in the app. Change them here and they change everywhere they are used.'],
 };
 
@@ -126,6 +129,7 @@ export default function App() {
           {route === 'field' && <FieldSetup />}
           {route === 'team' && allowed({ min: 'admin' }, user.role) && <Team me={user} />}
           {route === 'setup' && allowed({ min: 'admin' }, user.role) && <Setup />}
+          {route === 'isn' && allowed({ min: 'office' }, user.role) && <Isn />}
           {entity && <Records key={entity.key} entity={entity} />}
         </div>
       </main>

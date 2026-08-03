@@ -4,10 +4,14 @@
   --bg: #F1F4F8; --surface: #FFFFFF; --surface-2: #F7F9FC; --surface-3: #EDF1F6;
   --line: #E1E7EF; --line-2: #CFD8E3;
   --text: #16202C; --text-2: #56657A; --text-3: #8A97A8;
-  /* HouseMaster green carries the identity. Red is reserved for the two
-     things a tech must not misread: a deadline gone by, and a set that owes a
-     duplicate. */
-  --brand: #00713C; --brand-bg: #E4F2EA; --brand-2: #005C31;
+  /* HouseMaster green off the business card — CMYK 83.5/18.4/64/2.7, which is
+     #29CA59. That is --brand-bright and it only fills shapes with nothing on
+     top: white on it reads 2.17:1, which is not legible in a driveway at noon.
+     --brand is the same hue darkened until white clears 4.5:1, and carries
+     anything with a label on it. Red is reserved for the two things a tech
+     must not misread: a deadline gone by, and a set that owes a duplicate. */
+  --brand-bright: #29CA59;
+  --brand: #1B873C; --brand-bg: #EAFAEE; --brand-2: #176F31;
   --red: #D33A2C; --red-bg: #FDECEA;
   --amber: #B06A00; --amber-bg: #FFF3DE;
   --green: #1B7F55; --green-bg: #E6F6EF;
@@ -104,7 +108,7 @@ body {
 .ceu .row b { font-size: 15px; font-weight: 600; flex: 1; }
 .ceu .row span { font-size: 13px; color: var(--text-2); }
 .meter { height: 8px; border-radius: 4px; background: var(--surface-3); overflow: hidden; }
-.meter i { display: block; height: 100%; background: var(--brand); }
+.meter i { display: block; height: 100%; background: var(--brand-bright); }
 .meter.short i { background: var(--amber); }
 
 /* ----------------------------------------------------------------- tiles */

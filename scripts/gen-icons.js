@@ -8,7 +8,7 @@
 import { deflateSync } from 'node:zlib';
 import { writeFile } from 'node:fs/promises';
 
-const BRAND = [0x00, 0x71, 0x3c];   // HouseMaster green
+const BRAND = [0x1b, 0x87, 0x3c];   // HouseMaster green, the shade white reads on
 const WHITE = [0xff, 0xff, 0xff];
 
 const crcTable = Array.from({ length: 256 }, (_, n) => {
