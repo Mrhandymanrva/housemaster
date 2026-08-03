@@ -40,10 +40,15 @@ npm run dev:server            # migrations run automatically on boot
 npm run dev:web               # http://localhost:5173
 ```
 
-Load sample data and create the first login:
+Open it and the sign-in screen asks you to create the owner account, because
+the database has no logins yet. After that it is an ordinary sign-in screen and
+everyone else is added in the app under **Logins**.
+
+Sample records are optional and separate — employees, vehicles, policies and
+radon sets, so the compliance horizon has something on it:
 
 ```bash
-SEED_ADMIN_PASSWORD='pick-something-strong' npm run seed
+npm run seed:demo
 ```
 
 Migrations in `db/migrations/` run in filename order on every boot and record
@@ -59,11 +64,9 @@ themselves in `schema_migrations`, so deploys are safe to repeat.
 4. Set one variable: `JWT_SECRET` (any 64 random characters).
 5. Deploy. Railway reads `railway.json`, builds the Dockerfile, and health-checks
    `/api/health`.
-6. Create your login once, from the Railway shell:
-
-```bash
-SEED_ADMIN_PASSWORD='pick-something-strong' npm run seed
-```
+6. Open the URL and create the owner account on the sign-in screen. Do this as
+   soon as the deploy goes green: until that account exists, anyone who reaches
+   the URL could claim it. It closes permanently once one login exists.
 
 The server serves the API and the built desktop app from the same service, so
 there is one deployment and no CORS to manage.

@@ -9,7 +9,7 @@
     "dev:web": "npm --prefix web run dev",
     "build": "npm --prefix web install --no-audit --no-fund && npm --prefix web run build",
     "start": "node server/index.js",
-    "seed": "node scripts/seed.js",
+    "seed:demo": "node scripts/seed.js",
     "gen:demo-catalog": "node scripts/gen-demo-catalog.js",
     "postinstall": "npm --prefix web install --no-audit --no-fund"
   },

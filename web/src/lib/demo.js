@@ -421,6 +421,7 @@ export async function demoFetch(path, opts = {}) {
   await new Promise((r) => setTimeout(r, 90));
   const [p] = path.split('?');
 
+  if (p === '/auth/setup') return { needs_first_owner: false };
   if (p === '/auth/login') return { token: 'demo', user: DEMO_ME };
   if (p === '/auth/me') return { user: DEMO_ME };
   if (p === '/users') return { users: demoLogins, roles: ['field', 'office', 'admin', 'owner'] };
