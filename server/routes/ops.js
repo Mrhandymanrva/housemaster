@@ -256,6 +256,7 @@ r.post('/lookups', requireAuth, requireRole('admin'), wrap(async (req, res) => {
      RETURNING *`,
     [list_key, value, label || value, color || null, sort]
   );
+  bustCatalog(); // the catalog carries these choices, so it is now stale
   res.json({ value: rows[0] });
 }));
 

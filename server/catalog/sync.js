@@ -66,15 +66,37 @@ export async function syncCatalog() {
 
 let cache = null;
 
-/** Resolved catalog, DB-authoritative, cached in process. */
+/**
+ * Resolved catalog, DB-authoritative, cached in process.
+ *
+ * A select field carries `lookup_list` — the name of the list, not its
+ * contents — so the choices are resolved and attached here as `options`. That
+ * is what the drawer renders, and doing it once at this level means every
+ * dropdown in the app is populated by the same code path rather than each
+ * screen fetching lists for itself.
+ */
 export async function getCatalog(force = false) {
   if (cache && !force) return cache;
   const ents = (await q(
     `SELECT * FROM meta_entities WHERE hidden = false ORDER BY sort_order, label_plural`
   )).rows;
   const fields = (await q(`SELECT * FROM meta_fields ORDER BY entity_key, form_order`)).rows;
+  const choices = (await q(
+    `SELECT list_key, value, label, color FROM lookup_values
+      WHERE active ORDER BY list_key, sort, label`
+  )).rows;
+
+  const byList = {};
+  for (const c of choices) {
+    (byList[c.list_key] ||= []).push({ value: c.value, label: c.label, color: c.color });
+  }
   const byEntity = {};
-  for (const f of fields) (byEntity[f.entity_key] ||= []).push(f);
+  for (const f of fields) {
+    (byEntity[f.entity_key] ||= []).push(
+      f.lookup_list ? { ...f, options: byList[f.lookup_list] || [] } : f
+    );
+  }
+
   cache = ents.map((e) => ({ ...e, fields: byEntity[e.key] || [] }));
   return cache;
 }
