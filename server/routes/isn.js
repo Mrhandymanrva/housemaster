@@ -9,10 +9,22 @@ import { isnScheduleState } from '../isnSchedule.js';
 const r = Router();
 
 r.get('/status', requireAuth, wrap(async (_req, res) => {
-  const [conn, runs, gaps] = await Promise.all([
+  const [conn, runs, gaps, cached, services] = await Promise.all([
     q('SELECT * FROM isn_connection LIMIT 1'),
     q('SELECT * FROM isn_sync_log ORDER BY started_at DESC LIMIT 10'),
     q('SELECT count(*)::int AS n FROM isn_radon_orders_without_sets'),
+    q(`SELECT count(*)::int AS orders,
+              count(*) FILTER (WHERE has_radon)::int AS with_radon,
+              count(DISTINCT isn_office_id)::int AS offices,
+              count(*) FILTER (WHERE employee_id IS NULL)::int AS unassigned
+         FROM isn_orders`),
+    // What the office actually calls things. Service names are not personal
+    // data, and seeing them is the only way to tell whether "has radon" is
+    // matching what it should.
+    q(`SELECT COALESCE(s->>'name', s->>'service_name', s#>>'{}') AS name,
+              count(*)::int AS orders
+         FROM isn_orders o, jsonb_array_elements(o.services) s
+        GROUP BY 1 ORDER BY 2 DESC LIMIT 20`),
   ]);
   const c = conn.rows[0] || null;
   res.json({
@@ -20,6 +32,8 @@ r.get('/status', requireAuth, wrap(async (_req, res) => {
     credentialsPresent: !!(process.env.ISN_ACCESS_KEY && process.env.ISN_SECRET_ACCESS_KEY),
     runs: runs.rows,
     schedule: isnScheduleState(),
+    cached: cached.rows[0],
+    services: services.rows,
     radonOrdersWithoutSets: gaps.rows[0].n,
   });
 }));

@@ -244,6 +244,60 @@ export default function Isn() {
         </div>
       </div>
 
+      {/* --------------------------------------------------- what came in */}
+      {status.cached?.orders > 0 && (
+        <div className="card">
+          <div className="card-head">
+            <div>
+              <h2>What has come in</h2>
+              <div className="sub">
+                {status.cached.orders} orders cached
+                {status.cached.offices > 1 && <> across {status.cached.offices} offices</>}
+                {' · '}{status.cached.with_radon} flagged as radon
+                {status.cached.unassigned > 0 &&
+                  <> · {status.cached.unassigned} belong to nobody here yet</>}
+              </div>
+            </div>
+          </div>
+
+          {status.cached.with_radon === status.cached.orders && (
+            <div className="card-body" style={{ paddingBottom: 0 }}>
+              <div className="banner">
+                Every order is being flagged as radon, which is almost certainly wrong — it
+                drafts a radon set against each one. Check the service names below against
+                what counts as radon.
+              </div>
+            </div>
+          )}
+
+          <div className="card-body">
+            <div style={{ fontSize: 13.5, color: 'var(--text-2)', marginBottom: 10 }}>
+              What your office calls things. A service counts as radon when its name contains
+              any of: {(c?.radon_service_match || []).join(', ') || 'nothing set'}.
+            </div>
+            <div className="table-wrap">
+              <table className="data">
+                <thead><tr><th>Service on the order</th><th style={{ width: 110 }}>Orders</th>
+                  <th style={{ width: 110 }}>Counts as radon</th></tr></thead>
+                <tbody>
+                  {status.services.map((s, i) => {
+                    const hit = (c?.radon_service_match || [])
+                      .some((p) => String(s.name || '').toLowerCase().includes(String(p).toLowerCase()));
+                    return (
+                      <tr key={i} style={{ cursor: 'default' }}>
+                        <td style={{ color: 'var(--text)' }}>{s.name || <i>unnamed</i>}</td>
+                        <td>{s.orders}</td>
+                        <td>{hit ? <span className="pill green">yes</span> : <span className="muted">no</span>}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ------------------------------------------------- the ISN roster */}
       <div className="card">
         <div className="card-head">
