@@ -485,6 +485,23 @@ const num = (v) => {
   return Number.isFinite(n) && String(v ?? '').trim() !== '' ? n : null;
 };
 const blank = (v) => (v === '' || v == null ? null : v);
+
+/**
+ * A date, or nothing.
+ *
+ * ISN writes an absent date several ways — an empty string, the literal text
+ * "null", a zero date. Any of those left as a string reads as a real value
+ * downstream, so an order nobody has scheduled shows up in today's work.
+ */
+export function asDate(v) {
+  if (v == null) return null;
+  if (v instanceof Date) return Number.isNaN(v.getTime()) ? null : v;
+  const s = String(v).trim();
+  if (!s || /^(null|undefined|none|0)$/i.test(s)) return null;
+  if (/^0{4}-0{2}-0{2}/.test(s)) return null;          // 0000-00-00, the MySQL zero date
+  const d = new Date(s);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
 /**
  * ISN returns booleans as the strings "yes" and "no" — and `!!"no"` is true,
  * which is how every user came back flagged as both an inspector and an owner.
@@ -514,7 +531,13 @@ const personName = (p) =>
  * on, and the rest are along for it.
  */
 export function normalizeOrder(order, extras = {}) {
-  const start = blank(order.datetime) ?? blank(order.scheduleddatetime) ?? null;
+  // An order that has not been scheduled yet still has a datetime field —
+  // ISN's own schema calls it "Order datetime or literal string 'null'". Left
+  // as a string that is not a date, it reads as scheduled and gets counted.
+  //
+  // There is no fallback to `scheduleddatetime`: despite the name, the schema
+  // describes it as the id of the user who did the scheduling.
+  const start = asDate(order.datetime);
   const minutes = num(order.duration);
   const crew = Array.from({ length: 10 }, (_, i) => blank(order[`inspector${i + 1}`]))
     .filter(Boolean);
@@ -524,7 +547,7 @@ export function normalizeOrder(order, extras = {}) {
     order_number: blank(order.oid) != null ? String(order.oid) : blank(order.reportnumber),
     order_url: blank(order.mapurl),
     scheduled_start: start,
-    scheduled_end: start && minutes ? new Date(new Date(start).getTime() + minutes * 60000) : null,
+    scheduled_end: start && minutes ? new Date(start.getTime() + minutes * 60000) : null,
 
     // The lead inspector. extras.inspector fills in the name, because the
     // order only ever carries ids.
@@ -551,7 +574,10 @@ export function normalizeOrder(order, extras = {}) {
     // written up as either, so keep both and let the matcher look at all of it.
     services: [...(order.services || []), ...(order.fees || [])],
 
-    order_status: yes(order.canceled) ? 'Canceled'
+    // `show` is ISN's deleted flag — "yes or no ... if the order has been
+    // deleted". A deleted order is not a job and must not be counted as one.
+    order_status: !bool(order.show, true) ? 'Deleted'
+      : yes(order.canceled) ? 'Canceled'
       : yes(order.complete) ? 'Complete'
       : start ? 'Scheduled' : 'Unscheduled',
 

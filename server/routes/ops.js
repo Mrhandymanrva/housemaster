@@ -241,7 +241,7 @@ r.get('/field/today', requireAuth, wrap(async (req, res) => {
        FROM isn_orders o
       WHERE ($1::uuid IS NULL OR o.employee_id = $1)
         AND o.scheduled_start >= date_trunc('week', now() AT TIME ZONE $2)
-        AND o.order_status <> 'Canceled'
+        AND o.order_status NOT IN ('Canceled', 'Deleted', 'Unscheduled')
       GROUP BY 1`, [who, ZONE, ...kindParams]),
 
     q(`SELECT enabled, last_sync_at FROM isn_connection LIMIT 1`),
@@ -254,7 +254,7 @@ r.get('/field/today', requireAuth, wrap(async (req, res) => {
               COUNT(*)::int AS week
          FROM isn_orders o JOIN employees e ON e.id = o.employee_id
         WHERE o.scheduled_start >= date_trunc('week', now() AT TIME ZONE $1)
-          AND o.order_status <> 'Canceled'
+          AND o.order_status NOT IN ('Canceled', 'Deleted', 'Unscheduled')
         GROUP BY e.id, e.full_name`, [ZONE]) : { rows: [] },
 
     seeAll ? q(
@@ -355,7 +355,7 @@ r.get('/field/jobs', requireAuth, wrap(async (req, res) => {
        FROM isn_orders o
        LEFT JOIN employees e ON e.id = o.employee_id
       WHERE ($1::uuid IS NULL OR o.employee_id = $1)
-        AND o.order_status <> 'Canceled'
+        AND o.order_status NOT IN ('Canceled', 'Deleted', 'Unscheduled')
         AND ${when}
         AND ${filter}
       ORDER BY o.scheduled_start NULLS LAST

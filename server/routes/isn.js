@@ -14,6 +14,11 @@ r.get('/status', requireAuth, wrap(async (_req, res) => {
     q('SELECT * FROM isn_sync_log ORDER BY started_at DESC LIMIT 10'),
     q('SELECT count(*)::int AS n FROM isn_radon_orders_without_sets'),
     q(`SELECT count(*)::int AS orders,
+              count(*) FILTER (WHERE order_status NOT IN
+                ('Canceled','Deleted','Unscheduled'))::int AS counted,
+              count(*) FILTER (WHERE order_status = 'Unscheduled')::int AS unscheduled,
+              count(*) FILTER (WHERE order_status = 'Deleted')::int AS deleted,
+              count(*) FILTER (WHERE order_status = 'Canceled')::int AS canceled,
               count(*) FILTER (WHERE has_radon)::int AS with_radon,
               count(DISTINCT isn_office_id)::int AS offices,
               count(*) FILTER (WHERE employee_id IS NULL)::int AS unassigned

@@ -7,7 +7,7 @@
  * guesses too. These pin both down.
  */
 import assert from 'node:assert/strict';
-import { extractList, describeShape, unwrap, normalizeOrder, hasRadon, radonFee, bool, radonMatch, soldServices }
+import { extractList, describeShape, unwrap, normalizeOrder, hasRadon, radonFee, bool, radonMatch, soldServices, asDate }
   from './integrations/isn.js';
 
 let pass = 0;
@@ -173,6 +173,43 @@ t('a nameless line is not a match', () => {
 t('an order with nothing on it is not radon', () => {
   assert.equal(radonMatch({}, PATS).has, false);
   assert.equal(radonMatch(null, PATS).has, false);
+});
+
+console.log('\nan order nobody has scheduled is not work');
+t('the literal text "null" is not a date', () => {
+  // ISN's own schema: "Order datetime or literal string \'null\'". Left as a
+  // string it reads as scheduled and gets counted as today's work.
+  const u = normalizeOrder({ ...ORDER, datetime: 'null' }, {});
+  assert.equal(u.scheduled_start, null);
+  assert.equal(u.order_status, 'Unscheduled');
+});
+t('so are the other ways ISN writes no date', () => {
+  for (const v of ['', '   ', 'NULL', 'undefined', 'none', '0000-00-00 00:00:00']) {
+    assert.equal(asDate(v), null, `${JSON.stringify(v)} should be no date`);
+  }
+});
+t('a real date still parses', () => {
+  assert.equal(asDate('2026-08-04T13:00:00Z').toISOString(), '2026-08-04T13:00:00.000Z');
+});
+t('the user who scheduled it is not the time it is scheduled for', () => {
+  // scheduleddatetime is documented as the id of the scheduling user.
+  const u = normalizeOrder(
+    { ...ORDER, datetime: 'null', scheduleddatetime: '2b3ac41b-2d13-4735-a7ee-337b6ff16754' }, {});
+  assert.equal(u.scheduled_start, null);
+});
+t('a deleted order is not a job', () => {
+  // `show` is ISN's deleted flag.
+  assert.equal(normalizeOrder({ ...ORDER, show: 'no' }, {}).order_status, 'Deleted');
+  assert.equal(normalizeOrder({ ...ORDER, show: false }, {}).order_status, 'Deleted');
+});
+t('deleted beats every other status', () => {
+  assert.equal(normalizeOrder({ ...ORDER, show: 'no', complete: 'yes' }, {}).order_status, 'Deleted');
+});
+t('an ordinary order is untouched by all of this', () => {
+  assert.equal(normalizeOrder({ ...ORDER, show: 'yes' }, {}).order_status, 'Scheduled');
+});
+t('no end time without a start', () => {
+  assert.equal(normalizeOrder({ ...ORDER, datetime: 'null' }, {}).scheduled_end, null);
 });
 
 console.log('\nwhat was sold, as opposed to what was listed');

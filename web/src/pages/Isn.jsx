@@ -253,9 +253,16 @@ export default function Isn() {
               <div className="sub">
                 {status.cached.orders} orders cached
                 {status.cached.offices > 1 && <> across {status.cached.offices} offices</>}
+                {' · '}<b>{status.cached.counted} count as work</b>
                 {' · '}{status.cached.with_radon} flagged as radon
                 {status.cached.unassigned > 0 &&
                   <> · {status.cached.unassigned} belong to nobody here yet</>}
+              </div>
+              <div className="sub" style={{ marginTop: 2 }}>
+                Left out of every count:{' '}
+                {status.cached.unscheduled} not yet scheduled ·{' '}
+                {status.cached.canceled} cancelled ·{' '}
+                {status.cached.deleted} deleted in ISN
               </div>
             </div>
           </div>
