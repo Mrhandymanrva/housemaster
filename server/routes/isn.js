@@ -4,6 +4,7 @@ import { q, tx } from '../lib/db.js';
 import { wrap, bad } from '../lib/http.js';
 import { requireAuth, requireRole } from '../lib/auth.js';
 import { syncOnce, probe, getMe, extractList, unwrap, refreshUsers } from '../integrations/isn.js';
+import { isnScheduleState } from '../isnSchedule.js';
 
 const r = Router();
 
@@ -18,6 +19,7 @@ r.get('/status', requireAuth, wrap(async (_req, res) => {
     connection: c && { ...c, credential_env_var: c.credential_env_var },
     credentialsPresent: !!(process.env.ISN_ACCESS_KEY && process.env.ISN_SECRET_ACCESS_KEY),
     runs: runs.rows,
+    schedule: isnScheduleState(),
     radonOrdersWithoutSets: gaps.rows[0].n,
   });
 }));
@@ -170,7 +172,8 @@ r.post('/sync', requireAuth, requireRole('office'), wrap(async (_req, res) => {
 
 r.patch('/connection', requireAuth, requireRole('admin'), wrap(async (req, res) => {
   const allowed = ['company_key', 'service_domain', 'enabled', 'pull_window_days',
-                   'auto_create_sets', 'radon_service_match', 'integration_user', 'isn_office_id'];
+                   'auto_create_sets', 'radon_service_match', 'integration_user', 'isn_office_id',
+                   'sync_every_minutes'];
   const sets = [], vals = [];
   for (const k of allowed) {
     if (req.body[k] !== undefined) { vals.push(req.body[k]); sets.push(`${k} = $${vals.length}`); }

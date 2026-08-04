@@ -226,13 +226,24 @@ Setup, in order:
    shared login eats notifications other tools still need.
 2. Put them in `ISN_ACCESS_KEY` and `ISN_SECRET_ACCESS_KEY`. They never go in the
    database.
-3. Set the company key and switch the connection on:
-   `PATCH /api/isn/connection {"company_key":"...","enabled":true}`
-4. `POST /api/isn/sync` for a first pull, then run it on a schedule.
+3. In the app, under **ISN link**: set the company key and switch it on.
+4. **Read from ISN** to pull the user list, then match each inspector to a
+   person here. Until that is done an order belongs to nobody and no phone
+   counts it.
+5. If the ISN is shared between branches, pick **your office**. Everything else
+   stops being pulled and stops being shown.
+6. **Pull now** for the first orders. After that it runs hourly on its own.
 
-Each pull reads the footprint queue, follows every stub to its order, caches it,
-drafts a radon set for any order with radon on it, and only then tells ISN it can
-drop the footprint. Every run is recorded in `isn_sync_log`.
+Each pull reads `/orders` for the whole company and the footprint queue for
+whoever owns the keys, follows every one to its order, caches it, drafts a radon
+set for any order with radon on it, and only then tells ISN it can drop the
+footprint. Every run is recorded in `isn_sync_log`.
+
+The schedule lives in the web process (`server/isnSchedule.js`) rather than a
+second service, because the work is one call every few minutes. It re-reads its
+interval each minute, so a change in the app takes hold without a restart, and
+it takes a Postgres advisory lock before pulling — consuming a footprint deletes
+it, and two replicas racing over the same order would lose work.
 
 Once it is on, `GET /api/isn/my-jobs` is what the phone downloads: the day's radon
 jobs with address, client, agent and order number already filled in, plus the

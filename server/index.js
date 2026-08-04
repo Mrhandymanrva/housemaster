@@ -9,6 +9,7 @@ import { readdir, readFile } from 'node:fs/promises';
 import { pool, q, describeTarget } from './lib/db.js';
 import { secretIsPlaceholder } from './lib/auth.js';
 import { syncCatalog } from './catalog/sync.js';
+import { startIsnSchedule } from './isnSchedule.js';
 import authRoutes from './routes/auth.js';
 import userRoutes from './routes/users.js';
 import attachmentRoutes from './routes/attachments.js';
@@ -128,6 +129,8 @@ try {
   await q('SELECT refresh_compliance()');
   await q('SELECT refresh_compliance_radon()');
   app.listen(port, () => console.log(`HouseMaster Ops listening on ${port}`));
+  // Only once the server is up: a pull that fails must not stop it starting.
+  startIsnSchedule();
 } catch (err) {
   console.error(`\nStartup failed. ${err.message}\n`);
   process.exit(1);

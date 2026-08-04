@@ -189,6 +189,35 @@ export default function Isn() {
 
           <div className="setting" style={{ marginTop: 16 }}>
             <div style={{ minWidth: 0 }}>
+              <b>Pull on its own</b>
+              <span>
+                {on && c?.sync_every_minutes > 0
+                  ? <>Every {c.sync_every_minutes} minutes, whether anyone is looking or not.
+                      {status.schedule?.nextAt && <> Next around {new Date(status.schedule.nextAt)
+                        .toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}.</>}</>
+                  : 'Nobody has to remember to press the button. The phone counts are only as true as the last pull.'}
+              </span>
+            </div>
+            <span style={{ marginLeft: 'auto' }}>
+              <select className="input" style={{ width: 'auto' }}
+                      value={c?.sync_every_minutes ?? 60}
+                      disabled={busy === 'conn'}
+                      onChange={(e) => patch({ sync_every_minutes: Number(e.target.value) },
+                        Number(e.target.value)
+                          ? `Pulling every ${e.target.value} minutes.`
+                          : 'Automatic pulls switched off.')}>
+                <option value="0">Only when I press the button</option>
+                <option value="15">Every 15 minutes</option>
+                <option value="30">Every 30 minutes</option>
+                <option value="60">Every hour</option>
+                <option value="240">Every 4 hours</option>
+                <option value="1440">Once a day</option>
+              </select>
+            </span>
+          </div>
+
+          <div className="setting">
+            <div style={{ minWidth: 0 }}>
               <b>Check what ISN sends</b>
               <span>
                 Asks for footprints and reports the field names and shape of the answer —
