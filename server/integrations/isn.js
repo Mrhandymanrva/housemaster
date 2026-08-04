@@ -437,6 +437,33 @@ export function hasRadon(services, patterns) {
 }
 
 /**
+ * What was actually sold on this job.
+ *
+ * The same distinction radon needs, for every other service too: an order
+ * carries the office's whole fee schedule, most lines at zero, so asking
+ * "does this order mention mold" answers yes for every order in the company.
+ * A booked service is a sale; a fee is a sale only if it was charged.
+ *
+ * Counting reads this rather than the full list, so every job type gets the
+ * answer radon gets.
+ */
+export function soldServices(order) {
+  const sold = [];
+  for (const s of order?.services || []) {
+    const name = s?.name ?? s?.service_name ?? (typeof s === 'string' ? s : null);
+    if (name) sold.push({ name, from: 'service' });
+  }
+  for (const f of order?.fees || []) {
+    const name = f?.name ?? f?.service_name ?? null;
+    const amount = Number(f?.amount ?? f?.price ?? f?.fee);
+    if (name && Number.isFinite(amount) && amount > 0) {
+      sold.push({ name, from: 'fee', amount });
+    }
+  }
+  return sold;
+}
+
+/**
  * What radon was charged at.
  *
  * A booked service is {uuid, name} and carries no money; the fee entry beside
@@ -623,11 +650,12 @@ export async function syncOnce({ source = 'schedule' } = {}) {
                 property_address, property_city, property_state, property_zip,
                 square_feet, year_built, foundation_type,
                 client_name, client_phone, client_email, agent_name, agent_email,
-                services, has_radon, radon_fee, radon_reason, order_status, isn_office_id, raw, last_pulled_at)
+                services, sold_services, has_radon, radon_fee, radon_reason, order_status,
+                isn_office_id, raw, last_pulled_at)
              VALUES ($1,$2,$3,$4,$5,$6,$7,
                      (SELECT id FROM employees WHERE isn_user_id = $6 LIMIT 1),
                      $8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,
-                     $20::jsonb,$21,$22,$23,$24,$25,$26::jsonb, now())
+                     $20::jsonb,$21::jsonb,$22,$23,$24,$25,$26,$27::jsonb, now())
              ON CONFLICT (isn_order_id) DO UPDATE SET
                scheduled_start = EXCLUDED.scheduled_start,
                scheduled_end   = EXCLUDED.scheduled_end,
@@ -642,6 +670,7 @@ export async function syncOnce({ source = 'schedule' } = {}) {
                client_email    = EXCLUDED.client_email,
                agent_name      = EXCLUDED.agent_name,
                services        = EXCLUDED.services,
+               sold_services   = EXCLUDED.sold_services,
                has_radon       = EXCLUDED.has_radon,
                radon_fee       = EXCLUDED.radon_fee,
                radon_reason    = EXCLUDED.radon_reason,
@@ -655,7 +684,8 @@ export async function syncOnce({ source = 'schedule' } = {}) {
              o.property_address, o.property_city, o.property_state, o.property_zip,
              o.square_feet, o.year_built, o.foundation_type,
              o.client_name, o.client_phone, o.client_email, o.agent_name, o.agent_email,
-             JSON.stringify(o.services), radon, radonFee(o.services), radonWhy, o.order_status, o.isn_office_id,
+             JSON.stringify(o.services), JSON.stringify(soldServices(order)),
+             radon, radonFee(o.services), radonWhy, o.order_status, o.isn_office_id,
              JSON.stringify(order)]
           )).rows[0];
 

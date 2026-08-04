@@ -7,7 +7,7 @@
  * guesses too. These pin both down.
  */
 import assert from 'node:assert/strict';
-import { extractList, describeShape, unwrap, normalizeOrder, hasRadon, radonFee, bool, radonMatch }
+import { extractList, describeShape, unwrap, normalizeOrder, hasRadon, radonFee, bool, radonMatch, soldServices }
   from './integrations/isn.js';
 
 let pass = 0;
@@ -173,6 +173,42 @@ t('a nameless line is not a match', () => {
 t('an order with nothing on it is not radon', () => {
   assert.equal(radonMatch({}, PATS).has, false);
   assert.equal(radonMatch(null, PATS).has, false);
+});
+
+console.log('\nwhat was sold, as opposed to what was listed');
+t('a booked service is a sale', () => {
+  const sold = soldServices({ services: [{ uuid: 's', name: 'Mold Air Quality' }], fees: [] });
+  assert.deepEqual(sold, [{ name: 'Mold Air Quality', from: 'service' }]);
+});
+t('a fee that was charged is a sale', () => {
+  const sold = soldServices({ services: [], fees: [{ name: 'Sewer Scope', amount: 199 }] });
+  assert.deepEqual(sold, [{ name: 'Sewer Scope', from: 'fee', amount: 199 }]);
+});
+t('the price list at zero is not', () => {
+  // This is why mold and sewer showed against every scheduled inspection: the
+  // order carries the whole fee schedule, most of it at nothing.
+  const sold = soldServices({ services: [], fees: [
+    { name: 'Mold', amount: 0 }, { name: 'Sewer Scope', amount: '0.00' },
+    { name: 'Pool & Spa' }, { name: 'Termite', amount: '' },
+  ] });
+  assert.deepEqual(sold, []);
+});
+t('the sold list is what a search should read', () => {
+  const order = {
+    services: [{ name: 'Home Inspection' }],
+    fees: [{ name: 'Home Inspection', amount: 450 }, { name: 'Mold', amount: 0 },
+           { name: 'Radon Testing', amount: 150 }],
+  };
+  const text = JSON.stringify(soldServices(order)).toLowerCase();
+  assert.ok(text.includes('radon'), 'radon was charged');
+  assert.ok(!text.includes('mold'), 'mold was on the menu and not sold');
+});
+t('a nameless line is dropped', () => {
+  assert.deepEqual(soldServices({ services: [{ uuid: 'x' }], fees: [{ amount: 10 }] }), []);
+});
+t('nothing on the order is an empty list, not a crash', () => {
+  assert.deepEqual(soldServices({}), []);
+  assert.deepEqual(soldServices(null), []);
 });
 
 console.log('\nradon is whatever the office called it');

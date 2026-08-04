@@ -201,7 +201,7 @@ r.get('/field/today', requireAuth, wrap(async (req, res) => {
   // fixed set in this file. The patterns go across as parameters like every
   // other value in this codebase.
   const kindCounts = KINDS
-    .map((k, i) => `COUNT(*) FILTER (WHERE o.services::text ILIKE ANY($${i + 3})) AS ${k.key}`)
+    .map((k, i) => `COUNT(*) FILTER (WHERE o.sold_services::text ILIKE ANY($${i + 3})) AS ${k.key}`)
     .join(', ');
   const kindParams = KINDS.map((k) => k.patterns.map((p) => `%${p}%`));
 
@@ -340,7 +340,7 @@ r.get('/field/jobs', requireAuth, wrap(async (req, res) => {
     const k = KINDS.find((x) => x.key === kind);
     if (!k) throw bad('No such job type.');
     params.push(k.patterns.map((p) => `%${p}%`));
-    filter = `o.services::text ILIKE ANY($${params.length})`;
+    filter = `o.sold_services::text ILIKE ANY($${params.length})`;
   }
 
   const when = period === 'day'
