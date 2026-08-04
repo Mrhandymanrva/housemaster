@@ -375,23 +375,33 @@ function kitScreen() {
     const flagged = item.status === 'Needs Repair' || item.status === 'In Calibration'
       || (due != null && due <= 14);
 
+    // One fact per row, labelled. Everything on one line was unreadable at
+    // arm's length, which is the only distance this gets read at.
+    const rows = [
+      ['Condition', item.condition],
+      ['Category', item.asset_category],
+      ['On van', item.on_vehicle],
+      ['Where', item.current_location],
+      ['Serial', item.serial_number, 'mono'],
+      ['Asset tag', item.asset_tag, 'mono'],
+      ['Calibration', due == null ? null
+        : due < 0 ? `${-due} days overdue`
+        : due === 0 ? 'due today'
+        : `due in ${due} days`, due != null && due <= 14 ? 'warn' : ''],
+    ].filter(([, v]) => v != null && v !== '');
+
     const card = el(`
       <div class="kit ${flagged ? 'flag' : ''}">
-        <div class="kit-head">
-          <div class="what">
-            <div class="name">${esc(item.name)}</div>
-            <div class="meta">${esc([item.asset_category, item.serial_number, item.on_vehicle]
-              .filter(Boolean).join(' · '))}</div>
-            ${due != null ? `<div class="meta">${
-              due < 0 ? `Calibration ${-due} days overdue`
-              : due === 0 ? 'Calibration due today'
-              : `Calibration due in ${due} days`}</div>` : ''}
-          </div>
-          <div class="state">
-            <span class="pip ${item.status === 'Needs Repair' ? 'bad' : ''}">${esc(item.status)}</span>
-            ${item.condition ? `<span class="cond">${esc(item.condition)}</span>` : ''}
-          </div>
-        </div>
+        <button class="kit-head">
+          <span class="name">${esc(item.name)}</span>
+          <span class="pip ${item.status === 'Needs Repair' ? 'bad'
+            : item.status === 'In Calibration' ? 'wait' : ''}">${esc(item.status)}</span>
+          <span class="chev">${open === item.id ? '⌄' : '›'}</span>
+        </button>
+        <dl class="spec">
+          ${rows.map(([k, v, cls]) => `
+            <div><dt>${esc(k)}</dt><dd class="${cls || ''}">${esc(v)}</dd></div>`).join('')}
+        </dl>
       </div>`);
 
     card.querySelector('.kit-head').onclick = () => {
@@ -659,14 +669,28 @@ function homeScreen() {
   // ------------------------------------------------------------ equipment
   const kit = state.kit?.equipment || [];
   if (kit.length) {
+    const repair = kit.filter((x) => x.status === 'Needs Repair').length;
+    const away = kit.filter((x) => x.status === 'In Calibration').length;
+    const dueSoon = kit.filter((x) => x.calibration_days != null
+      && Number(x.calibration_days) <= 14 && x.status !== 'In Calibration').length;
     const flagged = kitFlagged(kit);
+
+    // The counts that would make a tech stop and check something, as separate
+    // chips rather than a sentence to be parsed.
+    const chips = [
+      repair && `<span class="chip bad">${repair} needs repair</span>`,
+      away && `<span class="chip wait">${away} being calibrated</span>`,
+      dueSoon && `<span class="chip warn">${dueSoon} calibration due</span>`,
+      !flagged.length && '<span class="chip ok">All in service</span>',
+    ].filter(Boolean).join('');
+
     const tile = el(`
       <button class="wide-tile ${flagged.length ? 'flag' : ''}">
         <div class="what">
-          <div class="name">Your equipment</div>
-          <div class="meta">${kit.length} ${kit.length === 1 ? 'item' : 'items'}${
-            flagged.length ? ` · ${flagged.length} ${flagged.length === 1 ? 'needs' : 'need'} a look`
-                           : ' · all in service'}</div>
+          <div class="name">Your equipment
+            <span class="tally">${kit.length}</span>
+          </div>
+          <div class="chips">${chips}</div>
         </div>
         <div class="chev">›</div>
       </button>`);
