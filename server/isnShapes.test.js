@@ -175,6 +175,47 @@ t('an order with nothing on it is not radon', () => {
   assert.equal(radonMatch(null, PATS).has, false);
 });
 
+console.log('\nISN sends a wall clock, not an instant');
+const inOffice = (d) => new Intl.DateTimeFormat('en-US', {
+  timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit', hour12: true,
+}).format(d);
+
+t('9am on the order is 9am at the office, not 9am UTC', () => {
+  // The server runs in UTC. Read as UTC, a 9am inspection reaches the phone as
+  // 5am — four hours out, which is exactly the summer offset.
+  const d = asDate('2026-08-04 09:00:00');
+  assert.equal(inOffice(d), '9:00 AM');
+  assert.equal(d.toISOString(), '2026-08-04T13:00:00.000Z', 'stored as the real instant');
+});
+t('the same reading with a T between', () => {
+  assert.equal(inOffice(asDate('2026-08-04T09:00:00')), '9:00 AM');
+});
+t('seconds are optional', () => {
+  assert.equal(inOffice(asDate('2026-08-04 09:00')), '9:00 AM');
+});
+t('winter is five hours out, not four', () => {
+  // Standard time. Getting this from a fixed offset rather than the zone would
+  // put every January appointment an hour wrong.
+  const d = asDate('2026-01-14 09:00:00');
+  assert.equal(inOffice(d), '9:00 AM');
+  assert.equal(d.toISOString(), '2026-01-14T14:00:00.000Z');
+});
+t('the morning the clocks go forward', () => {
+  // 8 March 2026, 2am jumps to 3am.
+  assert.equal(inOffice(asDate('2026-03-08 09:00:00')), '9:00 AM');
+});
+t('the morning they go back', () => {
+  assert.equal(inOffice(asDate('2026-11-01 09:00:00')), '9:00 AM');
+});
+t('a time that already says its zone is left alone', () => {
+  assert.equal(asDate('2026-08-04T13:00:00Z').toISOString(), '2026-08-04T13:00:00.000Z');
+  assert.equal(asDate('2026-08-04T09:00:00-04:00').toISOString(), '2026-08-04T13:00:00.000Z');
+});
+t('the end time follows the start', () => {
+  const u = normalizeOrder({ ...ORDER, datetime: '2026-08-04 09:00:00', duration: '180' }, {});
+  assert.equal(inOffice(new Date(u.scheduled_end)), '12:00 PM');
+});
+
 console.log('\nan order nobody has scheduled is not work');
 t('the literal text "null" is not a date', () => {
   // ISN's own schema: "Order datetime or literal string \'null\'". Left as a

@@ -5,6 +5,7 @@ import { requireAuth, requireRole } from '../lib/auth.js';
 import { getEntity, bustCatalog } from '../catalog/sync.js';
 import { createRadonSet, radonSetFromSubmission } from '../radonIntake.js';
 import { absorbPayloadImages, relinkAttachments } from '../attachments.js';
+import { OFFICE_ZONE } from '../lib/zone.js';
 
 /**
  * Some records are more than a row.
@@ -148,9 +149,10 @@ r.get('/field/reminders', requireAuth, wrap(async (req, res) => {
   });
 }));
 
-// The office runs on one clock. Counting a 7pm radon placement as tomorrow's
-// work because the server thinks in UTC would make every evening set wrong.
-const ZONE = 'America/New_York';
+// The office runs on one clock — see server/lib/zone.js. Counting a 7pm radon
+// placement as tomorrow's work because the server thinks in UTC would make
+// every evening set wrong.
+const ZONE = OFFICE_ZONE;
 
 /**
  * How each job type is recognised. ISN spells its services however the office

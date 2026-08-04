@@ -32,6 +32,7 @@
  * likely to have moved.
  */
 import { q, tx } from '../lib/db.js';
+import { fromOfficeWallClock } from '../lib/zone.js';
 
 const ADMIN_API = 'https://isnadmin.com/rest';
 
@@ -499,6 +500,19 @@ export function asDate(v) {
   const s = String(v).trim();
   if (!s || /^(null|undefined|none|0)$/i.test(s)) return null;
   if (/^0{4}-0{2}-0{2}/.test(s)) return null;          // 0000-00-00, the MySQL zero date
+
+  // ISN writes a wall-clock time with no zone on it — "2026-08-04 09:00:00"
+  // means nine in the morning at the office. This server runs in UTC, so left
+  // to the default that reading becomes 09:00Z and a phone in Richmond shows
+  // it as 5am. Anything that does carry an offset is already unambiguous.
+  const naive = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?$/.exec(s);
+  if (naive) {
+    return fromOfficeWallClock({
+      year: +naive[1], month: +naive[2], day: +naive[3],
+      hour: +naive[4], minute: +naive[5], second: +(naive[6] || 0),
+    });
+  }
+
   const d = new Date(s);
   return Number.isNaN(d.getTime()) ? null : d;
 }
