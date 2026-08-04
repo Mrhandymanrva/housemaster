@@ -222,7 +222,8 @@ r.get('/field/today', requireAuth, wrap(async (req, res) => {
              FROM inspector_readiness WHERE employee_id = $1`, [employeeId])
       : { rows: [] },
 
-    // Our own record of what went out, so this number never depends on ISN.
+    // What has actually been placed, as opposed to what is booked. The tile
+    // shows the booking, like every other service; this is the follow-through.
     nobody ? { rows: [{ day: 0, week: 0 }] } : q(
       `SELECT
          COUNT(*) FILTER (WHERE (deployed_at AT TIME ZONE $2)::date = (now() AT TIME ZONE $2)::date) AS day,
@@ -235,7 +236,8 @@ r.get('/field/today', requireAuth, wrap(async (req, res) => {
       `SELECT
          CASE WHEN (o.scheduled_start AT TIME ZONE $2)::date = (now() AT TIME ZONE $2)::date
               THEN 'day' ELSE 'week' END AS bucket,
-         COUNT(*) AS inspections${kindCounts ? ', ' + kindCounts : ''}
+         COUNT(*) AS inspections,
+         COUNT(*) FILTER (WHERE o.has_radon) AS radon${kindCounts ? ', ' + kindCounts : ''}
        FROM isn_orders o
       WHERE ($1::uuid IS NULL OR o.employee_id = $1)
         AND o.scheduled_start >= date_trunc('week', now() AT TIME ZONE $2)
@@ -266,7 +268,7 @@ r.get('/field/today', requireAuth, wrap(async (req, res) => {
   ]);
 
   // "This week" includes today; the query buckets them apart, so add them back.
-  const zero = () => ({ inspections: 0, ...Object.fromEntries(KINDS.map((k) => [k.key, 0])) });
+  const zero = () => ({ inspections: 0, radon: 0, ...Object.fromEntries(KINDS.map((k) => [k.key, 0])) });
   const day = zero();
   const week = zero();
   for (const row of jobs.rows) {
@@ -303,12 +305,65 @@ r.get('/field/today', requireAuth, wrap(async (req, res) => {
           short: Math.max(0, Number(readiness.required) - Number(readiness.completed)),
         }
       : null,
-    today: { ...day, radon: Number(sets.rows[0]?.day || 0) },
-    week: { ...week, radon: Number(sets.rows[0]?.week || 0) },
+    today: day,
+    week: week,
+    placed: { day: Number(sets.rows[0]?.day || 0), week: Number(sets.rows[0]?.week || 0) },
     kinds: KINDS.map(({ key, label }) => ({ key, label })),
     crew: [...crew.values()].sort((a, b) => (b.jobsWeek + b.radonWeek) - (a.jobsWeek + a.radonWeek)),
     isn: { connected: Boolean(isn.rows[0]?.enabled), lastSyncAt: isn.rows[0]?.last_sync_at || null },
   });
+}));
+
+/**
+ * The jobs behind a number.
+ *
+ * A count nobody can open is a number to be taken on trust. Tapping a tile
+ * asks this: the actual jobs, in time order, with whose day each one is on —
+ * which is also the fastest way to spot that a count is wrong.
+ */
+r.get('/field/jobs', requireAuth, wrap(async (req, res) => {
+  const employeeId = req.user.employee_id || null;
+  const maySeeAll = ['owner', 'admin'].includes(req.user.role);
+  const seeAll = maySeeAll && req.query.scope !== 'me';
+  const who = seeAll ? null : employeeId;
+  if (!seeAll && !employeeId) return res.json({ jobs: [], kind: null });
+
+  const kind = String(req.query.kind || 'inspections');
+  const period = req.query.period === 'day' ? 'day' : 'week';
+
+  let filter = 'TRUE';
+  const params = [who, ZONE];
+  if (kind === 'radon') {
+    filter = 'o.has_radon';
+  } else if (kind !== 'inspections') {
+    const KINDS = await jobKinds();
+    const k = KINDS.find((x) => x.key === kind);
+    if (!k) throw bad('No such job type.');
+    params.push(k.patterns.map((p) => `%${p}%`));
+    filter = `o.services::text ILIKE ANY($${params.length})`;
+  }
+
+  const when = period === 'day'
+    ? `(o.scheduled_start AT TIME ZONE $2)::date = (now() AT TIME ZONE $2)::date`
+    : `o.scheduled_start >= date_trunc('week', now() AT TIME ZONE $2)`;
+
+  const { rows } = await q(
+    `SELECT o.id, o.order_number, o.scheduled_start, o.property_address, o.property_city,
+            o.client_name, o.has_radon, o.order_status, o.order_url,
+            COALESCE(e.full_name, o.inspector_name, 'Nobody here yet') AS inspector,
+            o.employee_id
+       FROM isn_orders o
+       LEFT JOIN employees e ON e.id = o.employee_id
+      WHERE ($1::uuid IS NULL OR o.employee_id = $1)
+        AND o.order_status <> 'Canceled'
+        AND ${when}
+        AND ${filter}
+      ORDER BY o.scheduled_start NULLS LAST
+      LIMIT 200`,
+    params
+  );
+
+  res.json({ jobs: rows, kind, period, scope: seeAll ? 'branch' : 'me' });
 }));
 
 r.patch('/field/modules/:id', requireAuth, requireRole('admin'), wrap(async (req, res) => {

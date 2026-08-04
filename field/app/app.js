@@ -38,6 +38,7 @@ const state = {
   options: read(LS.options, {}),
   ledger: read(LS.ledger, []),
   today: read(LS.today, null),
+  jobs: null,
   scope: localStorage.getItem('hm_field_scope') || null,
   route: { name: 'home' },
   draft: {},
@@ -273,6 +274,95 @@ function loginScreen() {
   return box;
 }
 
+async function loadJobs() {
+  const { kind, period } = state.route;
+  try {
+    const d = await api(`/ops/field/jobs?kind=${encodeURIComponent(kind)}&period=${period}${
+      state.scope === 'me' ? '&scope=me' : ''}`);
+    state.jobs = d.jobs || [];
+  } catch (e) {
+    state.jobs = [];
+    state.err = e.message;
+  }
+  render();
+}
+
+const clock = (iso) => {
+  if (!iso) return 'No time set';
+  return new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+};
+const dayName = (iso) => {
+  if (!iso) return '';
+  const d = new Date(iso);
+  const today = new Date();
+  if (d.toDateString() === today.toDateString()) return 'Today';
+  return d.toLocaleDateString([], { weekday: 'long' });
+};
+
+/** The jobs behind a tile. Grouped by inspector when looking at the branch. */
+function jobsScreen() {
+  const { label, heading } = state.route;
+  const wrap = el('<div></div>');
+  wrap.append(el(`
+    <div class="top">
+      <button class="back" id="b">‹ Back</button>
+      <h1>${esc(label)}</h1>
+    </div>`));
+  wrap.querySelector('#b').onclick = () => {
+    state.route = { name: 'home' }; state.jobs = null; state.err = null; render();
+  };
+
+  const body = el('<div class="wrap"></div>');
+  body.append(el(`<div class="section-label">${esc(heading)}</div>`));
+
+  if (state.jobs === null) {
+    body.append(el('<div class="empty"><div class="spinner" style="margin:0 auto 12px"></div>Loading…</div>'));
+    wrap.append(body);
+    return wrap;
+  }
+  if (!state.jobs.length) {
+    body.append(el('<div class="empty">Nothing here.</div>'));
+    wrap.append(body);
+    return wrap;
+  }
+
+  // One heading per inspector when this is the whole branch; a flat list when
+  // it is one person's own day, because repeating their name adds nothing.
+  const byPerson = new Map();
+  for (const j of state.jobs) {
+    const key = j.inspector || 'Nobody here yet';
+    if (!byPerson.has(key)) byPerson.set(key, []);
+    byPerson.get(key).push(j);
+  }
+  const grouped = state.today?.scope === 'branch' && byPerson.size > 1;
+
+  const jobCard = (j) => el(`
+    <div class="job">
+      <div class="when">
+        <b>${esc(clock(j.scheduled_start))}</b>
+        <span>${esc(dayName(j.scheduled_start))}</span>
+      </div>
+      <div class="what">
+        <div class="addr">${esc(j.property_address || 'No address')}</div>
+        <div class="meta">${esc([j.property_city, j.client_name].filter(Boolean).join(' · '))}${
+          j.order_number ? ` · #${esc(j.order_number)}` : ''}</div>
+      </div>
+      ${j.has_radon ? '<span class="pip">radon</span>' : ''}
+    </div>`);
+
+  if (grouped) {
+    for (const [person, jobs] of [...byPerson.entries()].sort((a, b) => b[1].length - a[1].length)) {
+      body.append(el(`<div class="who-head">${esc(person)} <span>${jobs.length}</span></div>`));
+      for (const j of jobs) body.append(jobCard(j));
+    }
+  } else {
+    for (const j of state.jobs) body.append(jobCard(j));
+  }
+
+  wrap.append(body);
+  return wrap;
+}
+
 /** Today's work and this week's, in the order a tech would ask for them. */
 function countBlock() {
   const t = state.today;
@@ -290,24 +380,38 @@ function countBlock() {
   }
 
   const kinds = t.kinds || [];
-  const row = (period, data) => {
+  const row = (heading, period, data) => {
     const cells = [
-      { label: 'Inspections', n: data.inspections, lead: true },
-      { label: 'Radon sets', n: data.radon, lead: true },
-      ...kinds.map((k) => ({ label: k.label, n: data[k.key] ?? 0 })),
+      { key: 'inspections', label: 'Inspections', n: data.inspections, lead: true },
+      { key: 'radon', label: 'Radon', n: data.radon, lead: true },
+      ...kinds.map((k) => ({ key: k.key, label: k.label, n: data[k.key] ?? 0 })),
     ];
     const grid = el('<div class="stats"></div>');
     for (const c of cells) {
-      grid.append(el(`<div class="stat ${c.n ? (c.lead ? 'lead' : '') : 'none'}">
-        <b>${c.n ?? 0}</b><span>${esc(c.label)}</span></div>`));
+      const tile = el(`<button class="stat ${c.n ? (c.lead ? 'lead' : '') : 'none'}">
+        <b>${c.n ?? 0}</b><span>${esc(c.label)}</span></button>`);
+      // A number you cannot open is a number taken on trust.
+      tile.disabled = !c.n;
+      tile.onclick = () => {
+        state.route = { name: 'jobs', kind: c.key, period, label: c.label, heading };
+        state.jobs = null;
+        render();
+        loadJobs();
+      };
+      grid.append(tile);
     }
-    const wrapper = el(`<div><div class="section-label">${esc(period)}</div></div>`);
+    const wrapper = el(`<div><div class="section-label">${esc(heading)}</div></div>`);
     wrapper.append(grid);
     return wrapper;
   };
 
-  box.append(row(t.scope === 'branch' ? 'Today — everyone' : 'Today', t.today));
-  box.append(row(t.scope === 'branch' ? 'This week — everyone' : 'This week', t.week));
+  box.append(row(t.scope === 'branch' ? 'Today — everyone' : 'Today', 'day', t.today));
+  box.append(row(t.scope === 'branch' ? 'This week — everyone' : 'This week', 'week', t.week));
+
+  if (t.placed?.week) {
+    box.append(el(`<div class="hint">${t.placed.day} radon ${
+      t.placed.day === 1 ? 'set' : 'sets'} actually placed today, ${t.placed.week} this week.</div>`));
+  }
 
   // Who did what. Only an owner sees this, and only when looking at the branch
   // rather than at themselves.
@@ -707,6 +811,7 @@ function render() {
   const root = document.getElementById('app');
   root.textContent = '';
   if (!state.token) { root.append(loginScreen()); return; }
+  if (state.route.name === 'jobs') { root.append(jobsScreen()); return; }
   if (state.route.name === 'form') {
     const mod = state.modules.find((m) => m.key === state.route.key);
     if (mod) { root.append(formScreen(mod)); return; }
