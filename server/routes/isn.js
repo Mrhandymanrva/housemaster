@@ -9,7 +9,7 @@ import { isnScheduleState } from '../isnSchedule.js';
 const r = Router();
 
 r.get('/status', requireAuth, wrap(async (_req, res) => {
-  const [conn, runs, gaps, cached, services] = await Promise.all([
+  const [conn, runs, gaps, cached, services, why] = await Promise.all([
     q('SELECT * FROM isn_connection LIMIT 1'),
     q('SELECT * FROM isn_sync_log ORDER BY started_at DESC LIMIT 10'),
     q('SELECT count(*)::int AS n FROM isn_radon_orders_without_sets'),
@@ -22,9 +22,13 @@ r.get('/status', requireAuth, wrap(async (_req, res) => {
     // data, and seeing them is the only way to tell whether "has radon" is
     // matching what it should.
     q(`SELECT COALESCE(s->>'name', s->>'service_name', s#>>'{}') AS name,
-              count(*)::int AS orders
+              count(*)::int AS orders,
+              count(*) FILTER (WHERE (s->>'amount')::numeric > 0)::int AS charged
          FROM isn_orders o, jsonb_array_elements(o.services) s
         GROUP BY 1 ORDER BY 2 DESC LIMIT 20`),
+    q(`SELECT radon_reason, count(*)::int AS orders
+         FROM isn_orders WHERE has_radon AND radon_reason IS NOT NULL
+        GROUP BY 1 ORDER BY 2 DESC LIMIT 10`),
   ]);
   const c = conn.rows[0] || null;
   res.json({
@@ -34,6 +38,7 @@ r.get('/status', requireAuth, wrap(async (_req, res) => {
     schedule: isnScheduleState(),
     cached: cached.rows[0],
     services: services.rows,
+    radonReasons: why.rows,
     radonOrdersWithoutSets: gaps.rows[0].n,
   });
 }));

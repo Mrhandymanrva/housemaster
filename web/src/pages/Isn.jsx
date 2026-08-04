@@ -272,22 +272,41 @@ export default function Isn() {
 
           <div className="card-body">
             <div style={{ fontSize: 13.5, color: 'var(--text-2)', marginBottom: 10 }}>
-              What your office calls things. A service counts as radon when its name contains
-              any of: {(c?.radon_service_match || []).join(', ') || 'nothing set'}.
+              What your office calls things. A job counts as radon when a <b>booked service</b>{' '}
+              is named one of {(c?.radon_service_match || []).join(', ') || 'nothing set'} — or a{' '}
+              <b>fee by that name was actually charged</b>. A line at zero is a price list entry,
+              not a sale.
             </div>
+
+            {status.radonReasons?.length > 0 && (
+              <div style={{ fontSize: 13.5, color: 'var(--text-2)', marginBottom: 12 }}>
+                Why the radon ones matched:{' '}
+                {status.radonReasons.map((rr, i) => (
+                  <span key={i}>{i ? ' · ' : ''}{rr.radon_reason} <b>({rr.orders})</b></span>
+                ))}
+              </div>
+            )}
             <div className="table-wrap">
               <table className="data">
-                <thead><tr><th>Service on the order</th><th style={{ width: 110 }}>Orders</th>
-                  <th style={{ width: 110 }}>Counts as radon</th></tr></thead>
+                <thead><tr><th>Service or fee on the order</th><th style={{ width: 100 }}>Orders</th>
+                  <th style={{ width: 110 }}>Charged</th>
+                  <th style={{ width: 120 }}>Counts as radon</th></tr></thead>
                 <tbody>
                   {status.services.map((s, i) => {
-                    const hit = (c?.radon_service_match || [])
-                      .some((p) => String(s.name || '').toLowerCase().includes(String(p).toLowerCase()));
+                    const named = (c?.radon_service_match || [])
+                      .map((p) => String(p).trim().toLowerCase()).filter(Boolean)
+                      .some((p) => String(s.name || '').toLowerCase().includes(p));
                     return (
                       <tr key={i} style={{ cursor: 'default' }}>
                         <td style={{ color: 'var(--text)' }}>{s.name || <i>unnamed</i>}</td>
                         <td>{s.orders}</td>
-                        <td>{hit ? <span className="pill green">yes</span> : <span className="muted">no</span>}</td>
+                        <td>{s.charged > 0 ? `${s.charged} of ${s.orders}` : <span className="muted">never</span>}</td>
+                        <td>
+                          {!named ? <span className="muted">no</span>
+                            : s.charged > 0 ? <span className="pill green">yes</span>
+                            : <span className="pill amber" title="Named radon, but never charged — a price list line">
+                                only if charged</span>}
+                        </td>
                       </tr>
                     );
                   })}

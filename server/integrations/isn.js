@@ -386,11 +386,54 @@ export const getOrders = (after) =>
 
 // --------------------------------------------------------------- mapping
 
-/** ISN spells its services however the office set them up. Match loosely. */
+/**
+ * Was radon actually sold on this job?
+ *
+ * Two things here could match every order.
+ *
+ * An empty string in the match list matches everything, because ''.includes()
+ * is always true — one blank entry and the whole company has radon. Blanks are
+ * dropped now, and an empty list matches nothing rather than everything.
+ *
+ * And an ISN order commonly carries the office's whole price list as fee lines,
+ * most of them at zero. A radon line at nothing is a price on a menu, not a
+ * sale. So a booked service counts on its own; a fee only counts if it was
+ * actually charged.
+ *
+ * Returns why it matched, so a wrong answer can be read rather than guessed at.
+ */
+export function radonMatch(order, patterns) {
+  const pats = (patterns || [])
+    .map((p) => String(p ?? '').trim().toLowerCase())
+    .filter(Boolean);
+  if (!pats.length) return { has: false, why: null };
+
+  const hit = (name) => {
+    const n = String(name ?? '').trim().toLowerCase();
+    return n ? pats.some((p) => n.includes(p)) : false;
+  };
+  const nameOf = (x) => x?.name ?? x?.service_name ?? (typeof x === 'string' ? x : null);
+
+  for (const s of order?.services || []) {
+    const name = nameOf(s);
+    if (hit(name)) return { has: true, why: `booked service "${name}"` };
+  }
+
+  for (const f of order?.fees || []) {
+    const name = nameOf(f);
+    if (!hit(name)) continue;
+    const amount = Number(f?.amount ?? f?.price ?? f?.fee);
+    if (Number.isFinite(amount) && amount > 0) {
+      return { has: true, why: `fee "${name}" charged at ${amount}` };
+    }
+  }
+
+  return { has: false, why: null };
+}
+
+/** The older call shape: one flat list of service-ish things. */
 export function hasRadon(services, patterns) {
-  const names = (services || []).map((s) =>
-    String(s?.name ?? s?.service_name ?? s ?? '').toLowerCase());
-  return names.some((n) => patterns.some((p) => n.includes(p.toLowerCase())));
+  return radonMatch({ services: services || [] }, patterns).has;
 }
 
 /**
@@ -568,7 +611,9 @@ export async function syncOnce({ source = 'schedule' } = {}) {
         ]);
 
         const o = normalizeOrder(order, { client, agent, inspector });
-        const radon = hasRadon(o.services, c.radon_service_match);
+        // Against the raw order, which still has services and fees apart —
+        // a booked service is a sale, a zero fee line is a price list.
+        const { has: radon, why: radonWhy } = radonMatch(order, c.radon_service_match);
 
         const saved = await tx(async (t) => {
           const row = (await t.query(
@@ -578,11 +623,11 @@ export async function syncOnce({ source = 'schedule' } = {}) {
                 property_address, property_city, property_state, property_zip,
                 square_feet, year_built, foundation_type,
                 client_name, client_phone, client_email, agent_name, agent_email,
-                services, has_radon, radon_fee, order_status, isn_office_id, raw, last_pulled_at)
+                services, has_radon, radon_fee, radon_reason, order_status, isn_office_id, raw, last_pulled_at)
              VALUES ($1,$2,$3,$4,$5,$6,$7,
                      (SELECT id FROM employees WHERE isn_user_id = $6 LIMIT 1),
                      $8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,
-                     $20::jsonb,$21,$22,$23,$24,$25::jsonb, now())
+                     $20::jsonb,$21,$22,$23,$24,$25,$26::jsonb, now())
              ON CONFLICT (isn_order_id) DO UPDATE SET
                scheduled_start = EXCLUDED.scheduled_start,
                scheduled_end   = EXCLUDED.scheduled_end,
@@ -599,6 +644,7 @@ export async function syncOnce({ source = 'schedule' } = {}) {
                services        = EXCLUDED.services,
                has_radon       = EXCLUDED.has_radon,
                radon_fee       = EXCLUDED.radon_fee,
+               radon_reason    = EXCLUDED.radon_reason,
                order_status    = EXCLUDED.order_status,
                isn_office_id   = EXCLUDED.isn_office_id,
                raw             = EXCLUDED.raw,
@@ -609,13 +655,24 @@ export async function syncOnce({ source = 'schedule' } = {}) {
              o.property_address, o.property_city, o.property_state, o.property_zip,
              o.square_feet, o.year_built, o.foundation_type,
              o.client_name, o.client_phone, o.client_email, o.agent_name, o.agent_email,
-             JSON.stringify(o.services), radon, radonFee(o.services), o.order_status, o.isn_office_id,
+             JSON.stringify(o.services), radon, radonFee(o.services), radonWhy, o.order_status, o.isn_office_id,
              JSON.stringify(order)]
           )).rows[0];
 
           let setId = null;
           if (radon && c.auto_create_sets) {
             setId = (await t.query('SELECT isn_draft_radon_set($1) AS id', [row.id])).rows[0].id;
+          } else {
+            // This order used to look like radon and does not any more. Void
+            // the draft nobody has touched — a set with a monitor on it or a
+            // reading against it is somebody's work and is left alone.
+            await t.query(
+              `UPDATE radon_tests SET status = 'Voided'
+                WHERE isn_order_uuid = $1 AND status = 'Scheduled'
+                  AND NOT EXISTS (SELECT 1 FROM radon_deployments d
+                                   WHERE d.radon_test_id = radon_tests.id)`,
+              [row.id]
+            );
           }
           return { orderRow: row, setId };
         });

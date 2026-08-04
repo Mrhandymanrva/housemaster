@@ -7,7 +7,7 @@
  * guesses too. These pin both down.
  */
 import assert from 'node:assert/strict';
-import { extractList, describeShape, unwrap, normalizeOrder, hasRadon, radonFee, bool }
+import { extractList, describeShape, unwrap, normalizeOrder, hasRadon, radonFee, bool, radonMatch }
   from './integrations/isn.js';
 
 let pass = 0;
@@ -133,6 +133,46 @@ t('an order with no crew still normalises', () => {
   const bare = normalizeOrder({ id: 'x', address1: '1 Main' }, {});
   assert.equal(bare.inspector_isn_id, null);
   assert.deepEqual(bare.crew, []);
+});
+
+console.log('\nradon has to have been sold, not just listed');
+const PATS = ['radon', 'radon test', 'radon measurement', 'radon testing'];
+t('a booked radon service counts', () => {
+  const m = radonMatch({ services: [{ uuid: 's', name: 'Radon Testing' }] }, PATS);
+  assert.equal(m.has, true);
+  assert.match(m.why, /booked service/);
+});
+t('a radon fee that was charged counts', () => {
+  const m = radonMatch({ services: [], fees: [{ name: 'Radon', amount: 150 }] }, PATS);
+  assert.equal(m.has, true);
+  assert.match(m.why, /charged at 150/);
+});
+t('a radon line at zero is a price list, not a sale', () => {
+  // An ISN order commonly carries the whole fee schedule with most lines at
+  // nothing. Counting those flagged every order in the company.
+  assert.equal(radonMatch({ services: [], fees: [{ name: 'Radon', amount: 0 }] }, PATS).has, false);
+  assert.equal(radonMatch({ services: [], fees: [{ name: 'Radon', amount: '' }] }, PATS).has, false);
+  assert.equal(radonMatch({ services: [], fees: [{ name: 'Radon' }] }, PATS).has, false);
+});
+t('an ordinary inspection is not radon', () => {
+  assert.equal(radonMatch({ services: [{ name: 'Home Inspection' }],
+                            fees: [{ name: 'Home Inspection', amount: 450 }] }, PATS).has, false);
+});
+t('a blank pattern does not match the whole company', () => {
+  // ''.includes() is true for everything.
+  assert.equal(radonMatch({ services: [{ name: 'Home Inspection' }] }, ['radon', '']).has, false);
+  assert.equal(radonMatch({ services: [{ name: 'Home Inspection' }] }, ['  ']).has, false);
+});
+t('no patterns at all matches nothing, rather than everything', () => {
+  assert.equal(radonMatch({ services: [{ name: 'Radon Testing' }] }, []).has, false);
+  assert.equal(radonMatch({ services: [{ name: 'Radon Testing' }] }, null).has, false);
+});
+t('a nameless line is not a match', () => {
+  assert.equal(radonMatch({ services: [{ uuid: 'x' }], fees: [{ amount: 99 }] }, PATS).has, false);
+});
+t('an order with nothing on it is not radon', () => {
+  assert.equal(radonMatch({}, PATS).has, false);
+  assert.equal(radonMatch(null, PATS).has, false);
 });
 
 console.log('\nradon is whatever the office called it');
