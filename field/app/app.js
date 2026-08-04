@@ -20,6 +20,7 @@ const LS = {
   options: 'hm_field_options',
   ledger: 'hm_field_ledger',
   today: 'hm_field_today',
+  kit: 'hm_field_kit',
   scope: 'hm_field_scope',
   queue: 'hm_field_queue',
   device: 'hm_field_device',
@@ -39,6 +40,7 @@ const state = {
   ledger: read(LS.ledger, []),
   today: read(LS.today, null),
   jobs: null,
+  kit: read(LS.kit, null),
   scope: localStorage.getItem('hm_field_scope') || null,
   route: { name: 'home' },
   draft: {},
@@ -103,15 +105,20 @@ async function flush() {
 
 // --------------------------------------------------------------- loading
 async function refresh() {
-  const [cfg, rem, led, day] = await Promise.allSettled([
+  const [cfg, rem, led, day, kit] = await Promise.allSettled([
     api('/ops/field/config'),
     api('/ops/field/reminders'),
     api('/radon/ledger'),
     api(`/ops/field/today${state.scope === 'me' ? '?scope=me' : ''}`),
+    api(`/ops/field/equipment${state.scope === 'me' ? '?scope=me' : ''}`),
   ]);
   if (day.status === 'fulfilled') {
     state.today = day.value;
     write(LS.today, state.today);
+  }
+  if (kit.status === 'fulfilled') {
+    state.kit = kit.value;
+    write(LS.kit, state.kit);
   }
   if (cfg.status === 'fulfilled') {
     state.modules = cfg.value.modules || [];
@@ -190,6 +197,14 @@ function shrink(file, max = 1024, quality = 0.55) {
 // ------------------------------------------------------------------ bits
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+/** Money, short enough for a stat tile: $12.4k rather than $12,431.00. */
+const money0 = (n) => {
+  const v = Number(n) || 0;
+  if (v >= 100000) return `$${Math.round(v / 1000)}k`;
+  if (v >= 10000) return `$${(v / 1000).toFixed(1)}k`;
+  return `$${Math.round(v).toLocaleString()}`;
+};
 
 const dueText = (d) => {
   if (d < 0) return d === -1 ? '1 day late' : `${-d} days late`;
@@ -274,6 +289,23 @@ function loginScreen() {
   return box;
 }
 
+async function loadKit() {
+  try {
+    const d = await api(`/ops/field/equipment${state.scope === 'me' ? '?scope=me' : ''}`);
+    state.kit = d;
+    write(LS.kit, d);
+  } catch (e) {
+    state.err = e.message;
+    state.kit = state.kit || { equipment: [], statuses: [], conditions: [] };
+  }
+  render();
+}
+
+/** Anything a tech should look twice at before driving off. */
+const kitFlagged = (list = []) =>
+  list.filter((x) => x.status === 'Needs Repair' || x.status === 'In Calibration'
+    || (x.calibration_days != null && Number(x.calibration_days) <= 14));
+
 async function loadJobs() {
   const { kind, period } = state.route;
   try {
@@ -298,6 +330,139 @@ const dayName = (iso) => {
   if (d.toDateString() === today.toDateString()) return 'Today';
   return d.toLocaleDateString([], { weekday: 'long' });
 };
+
+/**
+ * The kit signed out to this person.
+ *
+ * Tapping one opens what a tech actually needs to say about it: it is broken,
+ * it is away being calibrated, here is what happened to it. The status lands
+ * straight away — a bent ladder should stop being usable now, not when the
+ * office next opens the inbox.
+ */
+function kitScreen() {
+  const wrap = el('<div></div>');
+  wrap.append(el(`
+    <div class="top">
+      <button class="back" id="b">‹ Back</button>
+      <h1>Your equipment</h1>
+    </div>`));
+  wrap.querySelector('#b').onclick = () => {
+    state.route = { name: 'home' }; state.err = null; render();
+  };
+
+  const body = el('<div class="wrap"></div>');
+  if (state.err) body.append(el(`<div class="banner">${esc(state.err)}</div>`));
+  if (state.flash) body.append(el(`<div class="ok">${esc(state.flash)}</div>`));
+
+  const kit = state.kit;
+  if (!kit) {
+    body.append(el('<div class="empty"><div class="spinner" style="margin:0 auto 12px"></div>Loading…</div>'));
+    wrap.append(body);
+    return wrap;
+  }
+  if (!kit.equipment?.length) {
+    body.append(el(`<div class="empty">
+      <h3>Nothing signed out to you</h3>
+      <p>The office assigns equipment to a person on the Records screen.</p>
+    </div>`));
+    wrap.append(body);
+    return wrap;
+  }
+
+  const open = state.route.itemId;
+  for (const item of kit.equipment) {
+    const due = item.calibration_days == null ? null : Number(item.calibration_days);
+    const flagged = item.status === 'Needs Repair' || item.status === 'In Calibration'
+      || (due != null && due <= 14);
+
+    const card = el(`
+      <div class="kit ${flagged ? 'flag' : ''}">
+        <div class="kit-head">
+          <div class="what">
+            <div class="name">${esc(item.name)}</div>
+            <div class="meta">${esc([item.asset_category, item.serial_number, item.on_vehicle]
+              .filter(Boolean).join(' · '))}</div>
+            ${due != null ? `<div class="meta">${
+              due < 0 ? `Calibration ${-due} days overdue`
+              : due === 0 ? 'Calibration due today'
+              : `Calibration due in ${due} days`}</div>` : ''}
+          </div>
+          <div class="state">
+            <span class="pip ${item.status === 'Needs Repair' ? 'bad' : ''}">${esc(item.status)}</span>
+            ${item.condition ? `<span class="cond">${esc(item.condition)}</span>` : ''}
+          </div>
+        </div>
+      </div>`);
+
+    card.querySelector('.kit-head').onclick = () => {
+      state.route = { ...state.route, itemId: open === item.id ? null : item.id };
+      state.draft = open === item.id ? {} : { status: item.status, condition: item.condition, note: '' };
+      render();
+    };
+
+    if (open === item.id) {
+      const form = el('<div class="kit-form"></div>');
+
+      const pick = (label, key, options) => {
+        const box = el(`<div class="field"><label>${esc(label)}</label></div>`);
+        const sel = el('<select></select>');
+        for (const o of options) {
+          const opt = el(`<option value="${esc(o.value)}">${esc(o.label)}</option>`);
+          if (state.draft[key] === o.value) opt.selected = true;
+          sel.append(opt);
+        }
+        sel.onchange = (e) => { state.draft[key] = e.target.value; };
+        box.append(sel);
+        return box;
+      };
+
+      form.append(pick('Status', 'status', kit.statuses));
+      if (kit.conditions.length) form.append(pick('Condition', 'condition', kit.conditions));
+
+      const noteBox = el(`
+        <div class="field">
+          <label>What happened</label>
+          <textarea placeholder="Rung is bent, taped it off. Needs replacing before the next attic."></textarea>
+          <div class="help">Added to this item's history. Nothing is overwritten.</div>
+        </div>`);
+      const ta = noteBox.querySelector('textarea');
+      ta.value = state.draft.note || '';
+      ta.oninput = (e) => { state.draft.note = e.target.value; };
+      form.append(noteBox);
+
+      const save = el(`<button class="btn primary">${state.busy === item.id ? 'Saving…' : 'Save it'}</button>`);
+      save.disabled = state.busy === item.id;
+      save.onclick = async () => {
+        state.busy = item.id; state.err = null; render();
+        try {
+          await api(`/ops/field/equipment/${item.id}`, {
+            method: 'PATCH',
+            body: {
+              status: state.draft.status,
+              condition: state.draft.condition,
+              note: state.draft.note,
+            },
+          });
+          state.flash = `${item.name} updated.`;
+          state.route = { name: 'kit' };
+          state.draft = {};
+        } catch (e) {
+          state.err = e.message;
+        }
+        state.busy = false;
+        render();
+        loadKit();
+      };
+      form.append(save);
+      card.append(form);
+    }
+
+    body.append(card);
+  }
+
+  wrap.append(body);
+  return wrap;
+}
 
 /** The jobs behind a tile. Grouped by inspector when looking at the branch. */
 function jobsScreen() {
@@ -413,6 +578,21 @@ function countBlock() {
       t.placed.day === 1 ? 'set' : 'sets'} actually placed today, ${t.placed.week} this week.</div>`));
   }
 
+  // Money is the owner's question, not the tech's.
+  if (t.revenue) {
+    box.append(el('<div class="section-label">Booked</div>'));
+    const money = el('<div class="stats"></div>');
+    money.append(el(`<div class="stat lead"><b>${esc(money0(t.revenue.week))}</b>
+      <span>This week</span></div>`));
+    money.append(el(`<div class="stat lead"><b>${esc(money0(t.revenue.month))}</b>
+      <span>This month</span></div>`));
+    money.append(el(`<div class="stat"><b>${esc(money0(t.revenue.monthUnpaid))}</b>
+      <span>Not yet paid</span></div>`));
+    box.append(money);
+    box.append(el(`<div class="hint">What the jobs were booked at, not what has landed
+      in the bank. Cancelled and deleted orders are left out.</div>`));
+  }
+
   // Who did what. Only an owner sees this, and only when looking at the branch
   // rather than at themselves.
   if (t.scope === 'branch' && t.crew?.length) {
@@ -475,6 +655,29 @@ function homeScreen() {
 
   // ---------------------------------------------------------------- count
   body.append(countBlock());
+
+  // ------------------------------------------------------------ equipment
+  const kit = state.kit?.equipment || [];
+  if (kit.length) {
+    const flagged = kitFlagged(kit);
+    const tile = el(`
+      <button class="wide-tile ${flagged.length ? 'flag' : ''}">
+        <div class="what">
+          <div class="name">Your equipment</div>
+          <div class="meta">${kit.length} ${kit.length === 1 ? 'item' : 'items'}${
+            flagged.length ? ` · ${flagged.length} ${flagged.length === 1 ? 'needs' : 'need'} a look`
+                           : ' · all in service'}</div>
+        </div>
+        <div class="chev">›</div>
+      </button>`);
+    tile.onclick = () => {
+      state.route = { name: 'kit' }; state.flash = null; state.err = null;
+      render();
+      loadKit();
+    };
+    body.append(el('<div class="section-label">Equipment</div>'));
+    body.append(tile);
+  }
 
   // ------------------------------------------------------------ deadlines
   // /today carries a wider horizon than /reminders; prefer it and fall back
@@ -812,6 +1015,7 @@ function render() {
   root.textContent = '';
   if (!state.token) { root.append(loginScreen()); return; }
   if (state.route.name === 'jobs') { root.append(jobsScreen()); return; }
+  if (state.route.name === 'kit') { root.append(kitScreen()); return; }
   if (state.route.name === 'form') {
     const mod = state.modules.find((m) => m.key === state.route.key);
     if (mod) { root.append(formScreen(mod)); return; }

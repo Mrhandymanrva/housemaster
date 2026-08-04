@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { q, tx } from '../lib/db.js';
-import { wrap, bad, notFound } from '../lib/http.js';
+import { wrap, bad, notFound, forbidden } from '../lib/http.js';
 import { requireAuth, requireRole } from '../lib/auth.js';
 import { getEntity, bustCatalog } from '../catalog/sync.js';
 import { createRadonSet, radonSetFromSubmission } from '../radonIntake.js';
@@ -209,7 +209,7 @@ r.get('/field/today', requireAuth, wrap(async (req, res) => {
 
   const nobody = !seeAll && !employeeId;
 
-  const [deadlines, ceu, sets, jobs, isn, byPerson, radonByPerson] = await Promise.all([
+  const [deadlines, ceu, sets, jobs, isn, byPerson, radonByPerson, money] = await Promise.all([
     nobody ? { rows: [] } : q(
       `SELECT id, category, title, subject, due_date, days_out, state, priority, responsible_name
          FROM compliance_horizon
@@ -267,6 +267,21 @@ r.get('/field/today', requireAuth, wrap(async (req, res) => {
          FROM radon_tests t JOIN employees e ON e.id = t.inspector_id
         WHERE t.deployed_at >= date_trunc('week', now() AT TIME ZONE $1)
         GROUP BY e.id, e.full_name`, [ZONE]) : { rows: [] },
+
+    // What the work was booked at. Whoever runs the branch asks this; a tech
+    // does not, and should not have to look at it.
+    seeAll ? q(
+      `SELECT
+         COALESCE(SUM(total_fee) FILTER (
+           WHERE scheduled_start >= date_trunc('week', now() AT TIME ZONE $1)), 0) AS week,
+         COALESCE(SUM(total_fee) FILTER (
+           WHERE scheduled_start >= date_trunc('month', now() AT TIME ZONE $1)), 0) AS month,
+         COALESCE(SUM(total_fee) FILTER (
+           WHERE scheduled_start >= date_trunc('month', now() AT TIME ZONE $1)
+             AND NOT paid), 0) AS month_unpaid
+       FROM isn_orders
+      WHERE total_fee IS NOT NULL
+        AND order_status NOT IN ('Canceled', 'Deleted', 'Unscheduled')`, [ZONE]) : { rows: [] },
   ]);
 
   // "This week" includes today; the query buckets them apart, so add them back.
@@ -312,6 +327,11 @@ r.get('/field/today', requireAuth, wrap(async (req, res) => {
     placed: { day: Number(sets.rows[0]?.day || 0), week: Number(sets.rows[0]?.week || 0) },
     kinds: KINDS.map(({ key, label }) => ({ key, label })),
     crew: [...crew.values()].sort((a, b) => (b.jobsWeek + b.radonWeek) - (a.jobsWeek + a.radonWeek)),
+    revenue: money.rows[0] ? {
+      week: Number(money.rows[0].week),
+      month: Number(money.rows[0].month),
+      monthUnpaid: Number(money.rows[0].month_unpaid),
+    } : null,
     isn: { connected: Boolean(isn.rows[0]?.enabled), lastSyncAt: isn.rows[0]?.last_sync_at || null },
   });
 }));
@@ -366,6 +386,94 @@ r.get('/field/jobs', requireAuth, wrap(async (req, res) => {
   );
 
   res.json({ jobs: rows, kind, period, scope: seeAll ? 'branch' : 'me' });
+}));
+
+/**
+ * The kit signed out to this person.
+ *
+ * A tech knows a ladder is bent the moment they pick it up, and the office
+ * finds out when somebody needs it. This is the shortest path between those
+ * two: what you are carrying, and one tap to say something is wrong with it.
+ */
+r.get('/field/equipment', requireAuth, wrap(async (req, res) => {
+  const employeeId = req.user.employee_id || null;
+  const maySeeAll = ['owner', 'admin'].includes(req.user.role);
+  const seeAll = maySeeAll && req.query.scope !== 'me';
+  const who = seeAll ? null : employeeId;
+  if (!seeAll && !employeeId) return res.json({ equipment: [], statuses: [], conditions: [] });
+
+  const [kit, statuses, conditions] = await Promise.all([
+    q(`SELECT e.id, e.name, e.asset_category, e.serial_number, e.asset_tag,
+              e.make, e.model, e.status, e.condition, e.current_location,
+              e.requires_calibration, e.next_calibration_due,
+              (e.next_calibration_due - CURRENT_DATE) AS calibration_days,
+              v.unit_number AS on_vehicle,
+              p.full_name AS assigned_to
+         FROM equipment e
+         LEFT JOIN vehicles v ON v.id = e.assigned_vehicle_id
+         LEFT JOIN employees p ON p.id = e.assigned_employee_id
+        WHERE e.status <> 'Retired'
+          AND ($1::uuid IS NULL OR e.assigned_employee_id = $1)
+        ORDER BY e.name`, [who]),
+    q(`SELECT value, label, color FROM lookup_values
+        WHERE list_key = 'asset_status' AND active ORDER BY sort, label`),
+    q(`SELECT value, label FROM lookup_values
+        WHERE list_key = 'asset_condition' AND active ORDER BY sort, label`),
+  ]);
+
+  res.json({
+    equipment: kit.rows,
+    statuses: statuses.rows,
+    conditions: conditions.rows,
+    scope: seeAll ? 'branch' : 'me',
+  });
+}));
+
+/**
+ * Say something about a piece of kit.
+ *
+ * The status change lands straight away rather than queueing for review: a
+ * ladder somebody has just reported bent should stop being usable now, not
+ * when the office next opens the inbox. Notes are added to, never replaced —
+ * what was wrong with it in March is part of the story of the thing.
+ */
+r.patch('/field/equipment/:id', requireAuth, wrap(async (req, res) => {
+  const { status, condition, note } = req.body || {};
+  const maySeeAll = ['owner', 'admin'].includes(req.user.role);
+
+  const owned = await q(
+    `SELECT id, name, assigned_employee_id, notes FROM equipment WHERE id = $1`, [req.params.id]);
+  const item = owned.rows[0];
+  if (!item) throw notFound('No such equipment.');
+  if (!maySeeAll && item.assigned_employee_id !== req.user.employee_id) {
+    throw forbidden('That is not signed out to you.');
+  }
+
+  const sets = [];
+  const vals = [];
+  const add = (col, v) => { vals.push(v); sets.push(`${col} = $${vals.length}`); };
+  if (status) add('status', status);
+  if (condition) add('condition', condition);
+
+  if (note?.trim()) {
+    const stamp = new Date().toLocaleDateString('en-US', { timeZone: OFFICE_ZONE });
+    const line = `${stamp} — ${req.user.name || 'Field'}: ${note.trim()}`;
+    add('notes', item.notes ? `${line}\n\n${item.notes}` : line);
+  }
+  if (!sets.length) throw bad('Nothing to change.');
+
+  vals.push(item.id);
+  const { rows } = await q(
+    `UPDATE equipment SET ${sets.join(', ')} WHERE id = $${vals.length} RETURNING *`, vals);
+
+  await q(
+    `INSERT INTO audit_log (user_id, entity, entity_id, action, diff)
+     VALUES ($1,'equipment',$2,'field_update',$3)`,
+    [req.user.id, item.id, JSON.stringify({ status, condition, note: note || null })]
+  );
+  await q('SELECT refresh_compliance()');
+
+  res.json({ equipment: rows[0] });
 }));
 
 r.patch('/field/modules/:id', requireAuth, requireRole('admin'), wrap(async (req, res) => {

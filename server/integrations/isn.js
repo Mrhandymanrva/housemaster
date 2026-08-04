@@ -572,6 +572,8 @@ export function normalizeOrder(order, extras = {}) {
     property_city: blank(order.city),
     property_state: blank(order.stateabbreviation) ?? blank(order.state),
     isn_office_id: blank(order.office),
+    total_fee: num(order.totalfee),
+    paid: bool(order.paid),
     property_zip: blank(order.zip),
     square_feet: num(order.squarefeet),
     year_built: num(order.yearbuilt),
@@ -691,11 +693,11 @@ export async function syncOnce({ source = 'schedule' } = {}) {
                 square_feet, year_built, foundation_type,
                 client_name, client_phone, client_email, agent_name, agent_email,
                 services, sold_services, has_radon, radon_fee, radon_reason, order_status,
-                isn_office_id, raw, last_pulled_at)
+                isn_office_id, total_fee, paid, raw, last_pulled_at)
              VALUES ($1,$2,$3,$4,$5,$6,$7,
                      (SELECT id FROM employees WHERE isn_user_id = $6 LIMIT 1),
                      $8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,
-                     $20::jsonb,$21::jsonb,$22,$23,$24,$25,$26,$27::jsonb, now())
+                     $20::jsonb,$21::jsonb,$22,$23,$24,$25,$26,$27,$28,$29::jsonb, now())
              ON CONFLICT (isn_order_id) DO UPDATE SET
                scheduled_start = EXCLUDED.scheduled_start,
                scheduled_end   = EXCLUDED.scheduled_end,
@@ -716,6 +718,8 @@ export async function syncOnce({ source = 'schedule' } = {}) {
                radon_reason    = EXCLUDED.radon_reason,
                order_status    = EXCLUDED.order_status,
                isn_office_id   = EXCLUDED.isn_office_id,
+               total_fee       = EXCLUDED.total_fee,
+               paid            = EXCLUDED.paid,
                raw             = EXCLUDED.raw,
                last_pulled_at  = now()
              RETURNING id, has_radon`,
@@ -726,6 +730,7 @@ export async function syncOnce({ source = 'schedule' } = {}) {
              o.client_name, o.client_phone, o.client_email, o.agent_name, o.agent_email,
              JSON.stringify(o.services), JSON.stringify(soldServices(order)),
              radon, radonFee(o.services), radonWhy, o.order_status, o.isn_office_id,
+             o.total_fee, o.paid,
              JSON.stringify(order)]
           )).rows[0];
 

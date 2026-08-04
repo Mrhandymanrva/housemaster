@@ -116,8 +116,12 @@ export default function Home({ go }) {
           <div className="card-body" style={{ display: 'grid', gap: 18 }}>
             {d.readiness.map((r) => {
               const stuck = r.licenses_expired > 0 || r.dl_expired;
-              const pct = r.ceu_hours_required
-                ? Math.min(100, Math.round((r.ceu_hours_completed / r.ceu_hours_required) * 100)) : 100;
+              // Postgres hands numerics back as strings, so "0" is truthy and
+              // 0 of 0 came out NaN \u2014 which is how somebody who owes no hours
+              // at all ended up with a full red bar against their name.
+              const need = Number(r.ceu_hours_required) || 0;
+              const done = Number(r.ceu_hours_completed) || 0;
+              const pct = need ? Math.min(100, Math.round((done / need) * 100)) : 0;
               return (
                 <div key={r.employee_id}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 7 }}>
@@ -127,12 +131,25 @@ export default function Home({ go }) {
                       {stuck ? (r.licenses_expired ? 'License expired' : 'Driver\u2019s license expired') : 'Good to go'}
                     </span>
                   </div>
-                  <div className="bar">
-                    <i style={{ width: `${pct}%`, background: pct >= 100 ? 'var(--green)' : pct >= 50 ? 'var(--amber)' : 'var(--red)' }} />
-                  </div>
-                  <div style={{ fontSize: 13, color: 'var(--text-2)', marginTop: 5 }}>
-                    {num(r.ceu_hours_completed)} of {num(r.ceu_hours_required)} training hours done this cycle
-                  </div>
+                  {need > 0 && (
+                    <>
+                      {/* Progress, not an alarm. Whether somebody can work today
+                          is the pill's job; this only says how far along they
+                          are, so it stays in the brand colour either way. */}
+                      <div className="bar">
+                        <i style={{ width: `${pct}%`, background: 'var(--brand)' }} />
+                      </div>
+                      <div style={{ fontSize: 13, color: 'var(--text-2)', marginTop: 5 }}>
+                        {num(done)} of {num(need)} training hours done this cycle
+                        {done >= need && ' \u2014 all done'}
+                      </div>
+                    </>
+                  )}
+                  {need === 0 && (
+                    <div style={{ fontSize: 13, color: 'var(--text-3)' }}>
+                      No training hours required this cycle
+                    </div>
+                  )}
                 </div>
               );
             })}
