@@ -33,7 +33,9 @@ const equipment = [
     const techs = ['Trevor Banks', 'Dale Whitfield', 'Rosa Nunez', 'Mason Holloway'];
     const vans = ['Van 1', 'Van 2', 'Van 3', null];
     return {
-      id: `q${n}`,
+      // crm-prefixed: the hand-written rows below already use q4…q8, and two
+      // rows sharing an id makes React drop one of them from the table
+      id: `crm${n}`,
       name: `Radon CRM #${n}`,
       asset_category: 'Radon',
       serial_number: `SN-10${27 + Math.floor(i / 3)}-${'ABCDEFGHIJKLMNOPQRSTUV'[i]}`,
@@ -464,6 +466,12 @@ export async function demoFetch(path, opts = {}) {
   if (p === '/radon/qa-check') return { ...qaStatus[0], tolerance_pct: 36, enforced: true };
   if (p.startsWith('/radon/tests/')) return anyDetail(p.split('/')[3]);
   if (p.startsWith('/ops/field/submissions')) return { submissions };
+  if (p.endsWith('/_options/list')) {
+    const key = p.split('/')[2];
+    const rows = rowsFor[key] || [];
+    const title = catalog.find((e) => e.key === key)?.title_column || 'name';
+    return { options: rows.map((r) => ({ id: r.id, label: r[title] ?? r.name ?? r.id })) };
+  }
   if (p.startsWith('/records/')) {
     const key = p.split('/')[2];
     const rows = rowsFor[key] || [];

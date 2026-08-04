@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { api } from '../lib/api.js';
 import Icon from './Icons.jsx';
 import { date } from '../lib/format.js';
 import { singular } from '../lib/plain.js';
@@ -10,7 +11,9 @@ function Switch({ on, onChange, label }) {
   );
 }
 
-function Control({ f, value, onChange }) {
+const plural = (key = '') => key.replace(/_/g, ' ') || 'records';
+
+function Control({ f, value, onChange, refs, currentLabel }) {
   const common = { className: `input ${f.format === 'mono' ? 'mono' : ''}`, id: f.column_name };
   switch (f.ui_control) {
     case 'readonly':
@@ -30,9 +33,27 @@ function Control({ f, value, onChange }) {
           {(f.options || []).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
         </select>
       );
-    case 'ref':
-      return <input {...common} value={value ?? ''} onChange={(e) => onChange(e.target.value)}
-                    placeholder={`Start typing a ${f.ref_entity?.replace(/_/g, ' ').replace(/s$/, '') || 'name'}…`} />;
+    case 'ref': {
+      // What goes in the column is a record's id, so this has to be a choice
+      // from a list. It used to be a text box that invited you to type a name
+      // and then tried to save the name as the id.
+      const choices = refs?.[f.ref_entity];
+      if (!choices) {
+        return <select {...common} disabled><option>Loading…</option></select>;
+      }
+      // An existing value whose record is not in the list would be silently
+      // dropped on save, so it is carried along as its own option.
+      const known = choices.some((o) => o.id === value);
+      return (
+        <select {...common} value={value ?? ''} onChange={(e) => onChange(e.target.value || null)}>
+          <option value="">
+            {choices.length ? 'Choose one…' : `No ${plural(f.ref_entity)} to choose from yet`}
+          </option>
+          {!known && value && <option value={value}>{currentLabel || 'Currently set'}</option>}
+          {choices.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+        </select>
+      );
+    }
     default:
       return <input {...common} value={value ?? ''} onChange={(e) => onChange(e.target.value)} />;
   }
@@ -42,8 +63,25 @@ export default function RecordDrawer({ entity, record, onClose, onSave, readOnly
   const [draft, setDraft] = useState(record || {});
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState(null);
+  const [refs, setRefs] = useState({});
 
   useEffect(() => setDraft(record || {}), [record]);
+
+  // One fetch per referenced entity, not per field: an equipment record points
+  // at both an employee and a vehicle, and a vehicle service record points at
+  // the same vehicle list twice.
+  useEffect(() => {
+    const wanted = [...new Set(
+      entity.fields.filter((f) => f.ui_control === 'ref' && f.ref_entity).map((f) => f.ref_entity)
+    )];
+    let dead = false;
+    Promise.all(wanted.map((key) =>
+      api(`/records/${key}/_options/list`)
+        .then((d) => [key, d.options || []])
+        .catch(() => [key, []])
+    )).then((pairs) => { if (!dead) setRefs(Object.fromEntries(pairs)); });
+    return () => { dead = true; };
+  }, [entity.key]);
   useEffect(() => {
     const esc = (e) => e.key === 'Escape' && onClose();
     window.addEventListener('keydown', esc);
@@ -88,7 +126,8 @@ export default function RecordDrawer({ entity, record, onClose, onSave, readOnly
                   <label htmlFor={f.column_name}>
                     {f.label}{f.required && <span className="opt"> — needed</span>}
                   </label>
-                  <Control f={f} value={draft[f.column_name]}
+                  <Control f={f} value={draft[f.column_name]} refs={refs}
+                           currentLabel={record?.[`${f.column_name}__label`]}
                            onChange={(v) => setDraft((d) => ({ ...d, [f.column_name]: v }))} />
                   {f.help && <div className="help">{f.help}</div>}
                 </div>

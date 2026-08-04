@@ -150,19 +150,22 @@ r.delete('/:entity/:id', requireAuth, requireRole('admin'), wrap(async (req, res
   res.status(204).end();
 }));
 
-// ------------------------------------------- typeahead for ref controls
+// ------------------------------------------- choices for ref controls
 r.get('/:entity/_options/list', requireAuth, wrap(async (req, res) => {
   const e = await getEntity(req.params.entity);
   if (!e) throw notFound();
+  // These fill a dropdown, not a typeahead, so the whole list has to come
+  // back — twenty-five would have quietly hidden the twenty-sixth van.
   const term = `%${req.query.q || ''}%`;
+  const limit = Math.min(Number(req.query.limit) || 500, 1000);
   const { rows } = await q(
     `SELECT id, ${ident(e.title_column)} AS label
        FROM ${ident(e.table_name)}
       WHERE ${ident(e.title_column)}::text ILIKE $1
-      ORDER BY ${ident(e.title_column)} LIMIT 25`,
+      ORDER BY ${ident(e.title_column)} LIMIT ${limit}`,
     [term]
   );
-  res.json({ options: rows });
+  res.json({ options: rows, capped: rows.length === limit });
 }));
 
 async function audit(req, entity, id, action, diff) {
