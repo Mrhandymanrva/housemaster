@@ -521,6 +521,8 @@ function jobsScreen() {
         <div class="addr">${esc(j.property_address || 'No address')}</div>
         <div class="meta">${esc([j.property_city, j.client_name].filter(Boolean).join(' · '))}${
           j.order_number ? ` · #${esc(j.order_number)}` : ''}</div>
+        ${(j.crew || []).length > 1
+          ? `<div class="meta">With ${esc(j.crew.join(' and '))}</div>` : ''}
       </div>
       ${j.has_radon ? '<span class="pip">radon</span>' : ''}
     </div>`);

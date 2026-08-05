@@ -241,7 +241,7 @@ r.get('/field/today', requireAuth, wrap(async (req, res) => {
          COUNT(*) AS inspections,
          COUNT(*) FILTER (WHERE o.has_radon) AS radon${kindCounts ? ', ' + kindCounts : ''}
        FROM isn_orders o
-      WHERE ($1::uuid IS NULL OR o.employee_id = $1)
+      WHERE ($1::uuid IS NULL OR $1 = ANY(o.crew_employee_ids))
         AND o.scheduled_start >= date_trunc('week', now() AT TIME ZONE $2)
         AND o.order_status NOT IN ('Canceled', 'Deleted', 'Unscheduled')
       GROUP BY 1`, [who, ZONE, ...kindParams]),
@@ -254,7 +254,9 @@ r.get('/field/today', requireAuth, wrap(async (req, res) => {
               COUNT(*) FILTER (WHERE (o.scheduled_start AT TIME ZONE $1)::date
                                      = (now() AT TIME ZONE $1)::date)::int AS day,
               COUNT(*)::int AS week
-         FROM isn_orders o JOIN employees e ON e.id = o.employee_id
+         FROM isn_orders o
+         CROSS JOIN LATERAL unnest(o.crew_employee_ids) AS x(employee_id)
+         JOIN employees e ON e.id = x.employee_id
         WHERE o.scheduled_start >= date_trunc('week', now() AT TIME ZONE $1)
           AND o.order_status NOT IN ('Canceled', 'Deleted', 'Unscheduled')
         GROUP BY e.id, e.full_name`, [ZONE]) : { rows: [] },
@@ -373,10 +375,15 @@ r.get('/field/jobs', requireAuth, wrap(async (req, res) => {
     `SELECT o.id, o.order_number, o.scheduled_start, o.property_address, o.property_city,
             o.client_name, o.has_radon, o.order_status, o.order_url,
             COALESCE(e.full_name, o.inspector_name, 'Nobody here yet') AS inspector,
-            o.employee_id
+            o.employee_id,
+            -- everyone on it, so a two-inspector job says so rather than
+            -- looking like it belongs to whoever was listed first
+            COALESCE((SELECT array_agg(c.full_name ORDER BY c.full_name)
+                        FROM employees c
+                       WHERE c.id = ANY(o.crew_employee_ids)), '{}') AS crew
        FROM isn_orders o
        LEFT JOIN employees e ON e.id = o.employee_id
-      WHERE ($1::uuid IS NULL OR o.employee_id = $1)
+      WHERE ($1::uuid IS NULL OR $1 = ANY(o.crew_employee_ids))
         AND o.order_status NOT IN ('Canceled', 'Deleted', 'Unscheduled')
         AND ${when}
         AND ${filter}

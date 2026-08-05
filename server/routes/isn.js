@@ -184,6 +184,16 @@ r.post('/roster/adopt', requireAuth, requireRole('admin'), wrap(async (req, res)
     await c.query(`UPDATE employees SET isn_user_id = $2 WHERE id = $1`, [id, isn_user_id]);
     const touched = await c.query(
       `UPDATE isn_orders SET employee_id = $2 WHERE inspector_isn_id = $1`, [isn_user_id, id]);
+
+    // Orders already pulled name this person by their ISN id; rebuild the crew
+    // lists so the ones they are second on reach them too.
+    await c.query(
+      `UPDATE isn_orders o
+          SET crew_employee_ids = COALESCE((
+                SELECT array_agg(DISTINCT e.id)
+                  FROM unnest(o.crew_isn_ids) AS x(isn_id)
+                  JOIN employees e ON e.isn_user_id = x.isn_id), '{}')
+        WHERE $1 = ANY(o.crew_isn_ids)`, [isn_user_id]);
     return { employeeId: id, ordersReassigned: touched.rowCount };
   });
 
@@ -269,6 +279,16 @@ r.post('/inspectors/link', requireAuth, requireRole('admin'), wrap(async (req, r
       `UPDATE isn_orders SET employee_id = $2 WHERE inspector_isn_id = $1`,
       [isn_user_id, employee_id || null]
     );
+
+    // Orders already pulled name this person by their ISN id; rebuild the crew
+    // lists so the ones they are second on reach them too.
+    await c.query(
+      `UPDATE isn_orders o
+          SET crew_employee_ids = COALESCE((
+                SELECT array_agg(DISTINCT e.id)
+                  FROM unnest(o.crew_isn_ids) AS x(isn_id)
+                  JOIN employees e ON e.isn_user_id = x.isn_id), '{}')
+        WHERE $1 = ANY(o.crew_isn_ids)`, [isn_user_id]);
     return touched.rowCount;
   });
 

@@ -618,7 +618,7 @@ export async function syncOnce({ source = 'schedule' } = {}) {
     `INSERT INTO isn_sync_log (trigger_source) VALUES ($1) RETURNING id`, [source]
   )).rows[0];
 
-  const counts = { footprints: 0, orders: 0, sets: 0, deleted: 0 };
+  const counts = { footprints: 0, listed: 0, orders: 0, sets: 0, deleted: 0 };
   const failures = [];
 
   try {
@@ -632,7 +632,12 @@ export async function syncOnce({ source = 'schedule' } = {}) {
     // Footprints are still consumed and deleted, because ISN expects that and
     // they pile up otherwise.
     const window = Number(c.pull_window_days || 14);
-    const after = new Date(Date.now() - window * 86400000).toISOString();
+    // `after` is ISN's change filter, not a scheduling one: an inspection
+    // booked two months ago for tomorrow has not been touched since, so a
+    // fortnight's lookback would never list it. Look back far enough to catch
+    // those, then decide what to actually process from the scheduled date.
+    const lookback = Math.max(window * 6, 120);
+    const after = new Date(Date.now() - lookback * 86400000).toISOString();
 
     const [everyOrder, footprints] = await Promise.all([
       getOrders(after).then((x) => extractList(x, 'orders')).catch((e) => {
@@ -645,6 +650,7 @@ export async function syncOnce({ source = 'schedule' } = {}) {
       }),
     ]);
     counts.footprints = footprints.length;
+    counts.listed = everyOrder.length;
 
     const withinWindow = (when) => {
       if (!when) return true;                    // no date on the stub — decide from the order
@@ -693,11 +699,17 @@ export async function syncOnce({ source = 'schedule' } = {}) {
                 square_feet, year_built, foundation_type,
                 client_name, client_phone, client_email, agent_name, agent_email,
                 services, sold_services, has_radon, radon_fee, radon_reason, order_status,
-                isn_office_id, total_fee, paid, raw, last_pulled_at)
+                isn_office_id, total_fee, paid, crew_isn_ids, crew_employee_ids,
+                raw, last_pulled_at)
              VALUES ($1,$2,$3,$4,$5,$6,$7,
                      (SELECT id FROM employees WHERE isn_user_id = $6 LIMIT 1),
                      $8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,
-                     $20::jsonb,$21::jsonb,$22,$23,$24,$25,$26,$27,$28,$29::jsonb, now())
+                     $20::jsonb,$21::jsonb,$22,$23,$24,$25,$26,$27,$28,
+                     $29::text[],
+                     (SELECT COALESCE(array_agg(e2.id), '{}')
+                        FROM unnest($29::text[]) AS x(isn_id)
+                        JOIN employees e2 ON e2.isn_user_id = x.isn_id),
+                     $30::jsonb, now())
              ON CONFLICT (isn_order_id) DO UPDATE SET
                scheduled_start = EXCLUDED.scheduled_start,
                scheduled_end   = EXCLUDED.scheduled_end,
@@ -720,6 +732,8 @@ export async function syncOnce({ source = 'schedule' } = {}) {
                isn_office_id   = EXCLUDED.isn_office_id,
                total_fee       = EXCLUDED.total_fee,
                paid            = EXCLUDED.paid,
+               crew_isn_ids      = EXCLUDED.crew_isn_ids,
+               crew_employee_ids = EXCLUDED.crew_employee_ids,
                raw             = EXCLUDED.raw,
                last_pulled_at  = now()
              RETURNING id, has_radon`,
@@ -730,7 +744,7 @@ export async function syncOnce({ source = 'schedule' } = {}) {
              o.client_name, o.client_phone, o.client_email, o.agent_name, o.agent_email,
              JSON.stringify(o.services), JSON.stringify(soldServices(order)),
              radon, radonFee(o.services), radonWhy, o.order_status, o.isn_office_id,
-             o.total_fee, o.paid,
+             o.total_fee, o.paid, o.crew,
              JSON.stringify(order)]
           )).rows[0];
 
@@ -772,7 +786,7 @@ export async function syncOnce({ source = 'schedule' } = {}) {
               footprints_seen = $3, orders_upserted = $4, sets_created = $5,
               footprints_deleted = $6, detail = $7::jsonb WHERE id = $1`,
       [run.id, status, counts.footprints, counts.orders, counts.sets, counts.deleted,
-       JSON.stringify({ failures })]
+       JSON.stringify({ failures, listed: counts.listed, window, lookback })]
     );
     await q(
       `UPDATE isn_connection SET last_sync_at = now(), last_sync_status = $1,
