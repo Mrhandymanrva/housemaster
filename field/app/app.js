@@ -616,7 +616,8 @@ function countBlock() {
           <div class="who">${esc(p.name)}</div>
           <div class="tally">
             <b>${p.jobsWeek}</b><span>jobs</span>
-            <b>${p.radonWeek}</b><span>radon</span>
+            <b>${p.radonWeek}</b><span>radon${
+              p.placedWeek ? ` (${p.placedWeek} placed)` : ''}</span>
           </div>
         </div>`));
     }

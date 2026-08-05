@@ -5,7 +5,7 @@ import { requireAuth, requireRole } from '../lib/auth.js';
 import { getEntity, bustCatalog } from '../catalog/sync.js';
 import { createRadonSet, radonSetFromSubmission } from '../radonIntake.js';
 import { absorbPayloadImages, relinkAttachments } from '../attachments.js';
-import { OFFICE_ZONE } from '../lib/zone.js';
+import { OFFICE_ZONE, officeRanges } from '../lib/zone.js';
 
 /**
  * Some records are more than a row.
@@ -198,12 +198,13 @@ r.get('/field/today', requireAuth, wrap(async (req, res) => {
   const seeAll = maySeeAll && req.query.scope !== 'me';
   const who = seeAll ? null : employeeId;
 
+  const R = officeRanges();
   const KINDS = await jobKinds();
   // Only the column aliases are written into the SQL, and those come from a
   // fixed set in this file. The patterns go across as parameters like every
   // other value in this codebase.
   const kindCounts = KINDS
-    .map((k, i) => `COUNT(*) FILTER (WHERE o.sold_services::text ILIKE ANY($${i + 3})) AS ${k.key}`)
+    .map((k, i) => `COUNT(*) FILTER (WHERE o.sold_services::text ILIKE ANY($${i + 6})) AS ${k.key}`)
     .join(', ');
   const kindParams = KINDS.map((k) => k.patterns.map((p) => `%${p}%`));
 
@@ -228,62 +229,63 @@ r.get('/field/today', requireAuth, wrap(async (req, res) => {
     // shows the booking, like every other service; this is the follow-through.
     nobody ? { rows: [{ day: 0, week: 0 }] } : q(
       `SELECT
-         COUNT(*) FILTER (WHERE (deployed_at AT TIME ZONE $2)::date = (now() AT TIME ZONE $2)::date) AS day,
-         COUNT(*) FILTER (WHERE deployed_at >= date_trunc('week', now() AT TIME ZONE $2)) AS week
+         COUNT(*) FILTER (WHERE deployed_at >= $2 AND deployed_at < $3) AS day,
+         COUNT(*) FILTER (WHERE deployed_at >= $4 AND deployed_at < $5) AS week
        FROM radon_tests
       WHERE deployed_at IS NOT NULL AND ($1::uuid IS NULL OR inspector_id = $1)`,
-      [who, ZONE]),
+      [who, R.dayStart, R.dayEnd, R.weekStart, R.weekEnd]),
 
     nobody ? { rows: [] } : q(
       `SELECT
-         CASE WHEN (o.scheduled_start AT TIME ZONE $2)::date = (now() AT TIME ZONE $2)::date
+         CASE WHEN o.scheduled_start >= $2 AND o.scheduled_start < $3
               THEN 'day' ELSE 'week' END AS bucket,
          COUNT(*) AS inspections,
          COUNT(*) FILTER (WHERE o.has_radon) AS radon${kindCounts ? ', ' + kindCounts : ''}
        FROM isn_orders o
       WHERE ($1::uuid IS NULL OR $1 = ANY(o.crew_employee_ids))
-        AND o.scheduled_start >= date_trunc('week', now() AT TIME ZONE $2)
+        AND o.scheduled_start >= $4 AND o.scheduled_start < $5
         AND o.order_status NOT IN ('Canceled', 'Deleted', 'Unscheduled')
-      GROUP BY 1`, [who, ZONE, ...kindParams]),
+      GROUP BY 1`, [who, R.dayStart, R.dayEnd, R.weekStart, R.weekEnd, ...kindParams]),
 
     q(`SELECT enabled, last_sync_at FROM isn_connection LIMIT 1`),
 
     // Who did what — only worth asking when looking at the whole branch.
     seeAll ? q(
       `SELECT e.id, e.full_name,
-              COUNT(*) FILTER (WHERE (o.scheduled_start AT TIME ZONE $1)::date
-                                     = (now() AT TIME ZONE $1)::date)::int AS day,
-              COUNT(*)::int AS week
+              COUNT(*) FILTER (WHERE o.scheduled_start >= $1 AND o.scheduled_start < $2)::int AS day,
+              COUNT(*)::int AS week,
+              COUNT(*) FILTER (WHERE o.has_radon)::int AS radon_week
          FROM isn_orders o
          CROSS JOIN LATERAL unnest(o.crew_employee_ids) AS x(employee_id)
          JOIN employees e ON e.id = x.employee_id
-        WHERE o.scheduled_start >= date_trunc('week', now() AT TIME ZONE $1)
+        WHERE o.scheduled_start >= $3 AND o.scheduled_start < $4
           AND o.order_status NOT IN ('Canceled', 'Deleted', 'Unscheduled')
-        GROUP BY e.id, e.full_name`, [ZONE]) : { rows: [] },
+        GROUP BY e.id, e.full_name`,
+      [R.dayStart, R.dayEnd, R.weekStart, R.weekEnd]) : { rows: [] },
 
     seeAll ? q(
       `SELECT e.id, e.full_name,
-              COUNT(*) FILTER (WHERE (t.deployed_at AT TIME ZONE $1)::date
-                                     = (now() AT TIME ZONE $1)::date)::int AS day,
+              COUNT(*) FILTER (WHERE t.deployed_at >= $1 AND t.deployed_at < $2)::int AS day,
               COUNT(*)::int AS week
          FROM radon_tests t JOIN employees e ON e.id = t.inspector_id
-        WHERE t.deployed_at >= date_trunc('week', now() AT TIME ZONE $1)
-        GROUP BY e.id, e.full_name`, [ZONE]) : { rows: [] },
+        WHERE t.deployed_at >= $3 AND t.deployed_at < $4
+        GROUP BY e.id, e.full_name`,
+      [R.dayStart, R.dayEnd, R.weekStart, R.weekEnd]) : { rows: [] },
 
     // What the work was booked at. Whoever runs the branch asks this; a tech
     // does not, and should not have to look at it.
     seeAll ? q(
       `SELECT
          COALESCE(SUM(total_fee) FILTER (
-           WHERE scheduled_start >= date_trunc('week', now() AT TIME ZONE $1)), 0) AS week,
+           WHERE scheduled_start >= $1 AND scheduled_start < $2), 0) AS week,
          COALESCE(SUM(total_fee) FILTER (
-           WHERE scheduled_start >= date_trunc('month', now() AT TIME ZONE $1)), 0) AS month,
+           WHERE scheduled_start >= $3 AND scheduled_start < $4), 0) AS month,
          COALESCE(SUM(total_fee) FILTER (
-           WHERE scheduled_start >= date_trunc('month', now() AT TIME ZONE $1)
-             AND NOT paid), 0) AS month_unpaid
+           WHERE scheduled_start >= $3 AND scheduled_start < $4 AND NOT paid), 0) AS month_unpaid
        FROM isn_orders
       WHERE total_fee IS NOT NULL
-        AND order_status NOT IN ('Canceled', 'Deleted', 'Unscheduled')`, [ZONE]) : { rows: [] },
+        AND order_status NOT IN ('Canceled', 'Deleted', 'Unscheduled')`,
+      [R.weekStart, R.weekEnd, R.monthStart, R.monthEnd]) : { rows: [] },
   ]);
 
   // "This week" includes today; the query buckets them apart, so add them back.
@@ -298,18 +300,23 @@ r.get('/field/today', requireAuth, wrap(async (req, res) => {
     }
   }
 
-  // One row per person, jobs and radon side by side.
+  // One row per person: jobs booked, radon booked, and radon actually placed.
+  // Radon has to mean the same thing here as in the tile above it — booked —
+  // or the two disagree with each other on the same screen.
   const crew = new Map();
-  const put = (rows, field) => {
-    for (const r0 of rows) {
-      const e = crew.get(r0.id) || { id: r0.id, name: r0.full_name, jobsDay: 0, jobsWeek: 0, radonDay: 0, radonWeek: 0 };
-      e[`${field}Day`] = r0.day;
-      e[`${field}Week`] = r0.week;
-      crew.set(r0.id, e);
-    }
+  const seat = (r0) => {
+    const e = crew.get(r0.id)
+      || { id: r0.id, name: r0.full_name, jobsDay: 0, jobsWeek: 0, radonWeek: 0, placedWeek: 0 };
+    crew.set(r0.id, e);
+    return e;
   };
-  put(byPerson.rows, 'jobs');
-  put(radonByPerson.rows, 'radon');
+  for (const r0 of byPerson.rows) {
+    const e = seat(r0);
+    e.jobsDay = r0.day;
+    e.jobsWeek = r0.week;
+    e.radonWeek = r0.radon_week;
+  }
+  for (const r0 of radonByPerson.rows) seat(r0).placedWeek = r0.week;
 
   const readiness = ceu.rows[0] || null;
   res.json({
@@ -328,7 +335,7 @@ r.get('/field/today', requireAuth, wrap(async (req, res) => {
     week: week,
     placed: { day: Number(sets.rows[0]?.day || 0), week: Number(sets.rows[0]?.week || 0) },
     kinds: KINDS.map(({ key, label }) => ({ key, label })),
-    crew: [...crew.values()].sort((a, b) => (b.jobsWeek + b.radonWeek) - (a.jobsWeek + a.radonWeek)),
+    crew: [...crew.values()].sort((a, b) => b.jobsWeek - a.jobsWeek || b.radonWeek - a.radonWeek),
     revenue: money.rows[0] ? {
       week: Number(money.rows[0].week),
       month: Number(money.rows[0].month),

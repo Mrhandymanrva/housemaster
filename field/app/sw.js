@@ -6,7 +6,7 @@
  * second stale copy behind it would be a second thing to reason about when a
  * tech says the form looks wrong.
  */
-const VERSION = 'hm-field-v9';
+const VERSION = 'hm-field-v10';
 const SHELL = [
   './', './index.html', './app.css', './app.js', './qa-guard.js',
   './manifest.webmanifest', './icon-192.png', './icon-512.png', './icon-180.png',
