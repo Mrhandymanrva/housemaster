@@ -20,6 +20,13 @@ export default function Isn() {
   const [busy, setBusy] = useState(null);
   const [key, setKey] = useState('');
   const [probe, setProbe] = useState(null);
+  const [orderNo, setOrderNo] = useState('');
+  const [lookup, setLookup] = useState(null);
+
+  const lookUpOrder = () =>
+    run('lookup', async () => {
+      setLookup(await api(`/isn/order-lookup?number=${encodeURIComponent(orderNo.trim())}`));
+    });
   const [people, setPeople] = useState(null);
   const [onlyInspectors, setOnlyInspectors] = useState(true);
   const [whose, setWhose] = useState(null);
@@ -215,6 +222,38 @@ export default function Isn() {
               </select>
             </span>
           </div>
+
+          <div className="setting">
+            <div style={{ minWidth: 0 }}>
+              <b>Why is a job not showing?</b>
+              <span>
+                Put in the order number from ISN's calendar and this says what we hold for
+                it and what each filter makes of it.
+              </span>
+            </div>
+            <span style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+              <input className="input mono" style={{ width: 120 }} placeholder="23495"
+                     value={orderNo} onChange={(e) => setOrderNo(e.target.value)}
+                     onKeyDown={(e) => e.key === 'Enter' && lookUpOrder()} />
+              <button className="btn" style={{ width: 'auto' }}
+                      disabled={busy === 'lookup' || !orderNo.trim()} onClick={lookUpOrder}>
+                {busy === 'lookup' ? <span className="spinner" /> : null} Look it up
+              </button>
+            </span>
+          </div>
+
+          {lookup && (
+            <div style={{ marginTop: 12 }}>
+              <div className={lookup.reasons?.length || !lookup.cached ? 'banner' : 'note'}>
+                <b>#{lookup.number}</b> — {lookup.verdict}
+              </div>
+              <pre style={{
+                marginTop: 10, padding: 14, background: 'var(--surface-2)',
+                border: '1px solid var(--line)', borderRadius: 'var(--r-sm)',
+                fontSize: 12.5, fontFamily: 'var(--mono)', overflowX: 'auto', whiteSpace: 'pre-wrap',
+              }}>{JSON.stringify(lookup.order || lookup.lastPull, null, 2)}</pre>
+            </div>
+          )}
 
           <div className="setting">
             <div style={{ minWidth: 0 }}>

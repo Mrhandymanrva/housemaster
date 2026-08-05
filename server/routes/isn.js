@@ -5,6 +5,7 @@ import { wrap, bad } from '../lib/http.js';
 import { requireAuth, requireRole } from '../lib/auth.js';
 import { syncOnce, probe, getMe, extractList, unwrap, refreshUsers } from '../integrations/isn.js';
 import { isnScheduleState } from '../isnSchedule.js';
+import { officeRanges } from '../lib/zone.js';
 
 const r = Router();
 
@@ -60,6 +61,94 @@ r.get('/probe', requireAuth, requireRole('admin'), wrap(async (_req, res) => {
     probes.push(await probe(path));
   }
   res.json({ probes });
+}));
+
+/**
+ * Why is this job not showing?
+ *
+ * Given the order number off ISN's calendar, say what we hold and what each
+ * filter makes of it. Guessing at a missing job from the outside costs a
+ * deploy per hypothesis; this answers it in one.
+ */
+r.get('/order-lookup', requireAuth, requireRole('office'), wrap(async (req, res) => {
+  const number = String(req.query.number || '').trim();
+  if (!number) throw bad('Which order number?');
+
+  const R = officeRanges();
+  const [found, conn, lastRun] = await Promise.all([
+    q(`SELECT o.*,
+              (SELECT array_agg(e.full_name) FROM employees e
+                WHERE e.id = ANY(o.crew_employee_ids)) AS crew_names
+         FROM isn_orders o
+        WHERE o.order_number = $1 OR o.isn_order_id = $1
+        LIMIT 1`, [number]),
+    q('SELECT isn_office_id, pull_window_days FROM isn_connection LIMIT 1'),
+    q(`SELECT started_at, status, footprints_seen, orders_upserted, detail
+         FROM isn_sync_log ORDER BY started_at DESC LIMIT 1`),
+  ]);
+
+  const o = found.rows[0] || null;
+  const c = conn.rows[0] || {};
+  const run = lastRun.rows[0] || null;
+
+  if (!o) {
+    return res.json({
+      number,
+      cached: false,
+      // The most useful thing when an order is simply absent: how many the
+      // last pull even looked at. A round number is a cap, not a coincidence.
+      lastPull: run && {
+        at: run.started_at, status: run.status,
+        ordersListed: run.detail?.listed ?? null,
+        ordersSaved: run.orders_upserted,
+        footprintsSeen: run.footprints_seen,
+        lookbackDays: run.detail?.lookback ?? null,
+      },
+      verdict: 'That order is not in our copy at all — it was never listed by the pull.',
+    });
+  }
+
+  const reasons = [];
+  if (['Canceled', 'Deleted', 'Unscheduled'].includes(o.order_status)) {
+    reasons.push(`Its status here is ${o.order_status}, which is left out of every count.`);
+  }
+  if (!o.scheduled_start) reasons.push('It has no scheduled time on it.');
+  if (c.isn_office_id && o.isn_office_id && o.isn_office_id !== c.isn_office_id) {
+    reasons.push('It belongs to a different office than the one you picked.');
+  }
+  if (!o.crew_employee_ids?.length) {
+    reasons.push(o.inspector_isn_id
+      ? 'Nobody here is matched to the inspector on it, so it counts for no one.'
+      : 'It has no inspector on it at all.');
+  }
+  if (o.scheduled_start && !(new Date(o.scheduled_start) >= R.dayStart
+                             && new Date(o.scheduled_start) < R.dayEnd)) {
+    reasons.push('It is not scheduled for today.');
+  }
+
+  res.json({
+    number,
+    cached: true,
+    order: {
+      isn_order_id: o.isn_order_id,
+      order_number: o.order_number,
+      status: o.order_status,
+      scheduled_start: o.scheduled_start,
+      address: o.property_address,
+      client: o.client_name,
+      office: o.isn_office_id,
+      inspector_isn_id: o.inspector_isn_id,
+      inspector_name: o.inspector_name,
+      crew_isn_ids: o.crew_isn_ids,
+      crew_names: o.crew_names || [],
+      has_radon: o.has_radon,
+      radon_reason: o.radon_reason,
+      last_pulled_at: o.last_pulled_at,
+    },
+    today: { from: R.dayStart, to: R.dayEnd },
+    reasons,
+    verdict: reasons.length ? reasons.join(' ') : 'Nothing here would keep it off a phone.',
+  });
 }));
 
 /**
