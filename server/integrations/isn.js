@@ -399,8 +399,13 @@ export async function listedByIsn(number, { lookbackDays = 365 } = {}) {
   const orders = extractList(await getOrders(after), 'orders');
 
   const wanted = String(number);
+  // A stub carries id, show and modified — no order number — so a miss here
+  // means "cannot tell from the list", not "ISN does not have it". Only an id
+  // match is worth anything.
+  const byNumber = orders.some((o) => o?.oid != null || o?.reportnumber != null);
   const match = orders.find((o) =>
-    String(o?.oid ?? '') === wanted || String(o?.id ?? '') === wanted
+    String(o?.id ?? '') === wanted
+    || String(o?.oid ?? '') === wanted
     || String(o?.reportnumber ?? '') === wanted);
 
   const dates = orders.map((o) => asDate(o?.datetime)).filter(Boolean).sort((a, b) => a - b);
@@ -410,6 +415,8 @@ export async function listedByIsn(number, { lookbackDays = 365 } = {}) {
     lookbackDays,
     listed: orders.length,
     present: Boolean(match),
+    // false when the list is stubs: absence proves nothing
+    canMatchByNumber: byNumber,
     earliest: iso(dates[0]),
     latest: iso(dates[dates.length - 1]),
     withDates: dates.length,
@@ -609,6 +616,7 @@ export function normalizeOrder(order, extras = {}) {
     property_city: blank(order.city),
     property_state: blank(order.stateabbreviation) ?? blank(order.state),
     isn_office_id: blank(order.office),
+    isn_modified: asDate(order.modified),
     total_fee: num(order.totalfee),
     paid: bool(order.paid),
     property_zip: blank(order.zip),
@@ -655,7 +663,8 @@ export async function syncOnce({ source = 'schedule' } = {}) {
     `INSERT INTO isn_sync_log (trigger_source) VALUES ($1) RETURNING id`, [source]
   )).rows[0];
 
-  const counts = { footprints: 0, listed: 0, orders: 0, sets: 0, deleted: 0 };
+  const counts = { footprints: 0, listed: 0, unchanged: 0, remaining: 0,
+                   orders: 0, sets: 0, deleted: 0, skippedOffice: 0 };
   const failures = [];
 
   try {
@@ -689,31 +698,58 @@ export async function syncOnce({ source = 'schedule' } = {}) {
     counts.footprints = footprints.length;
     counts.listed = everyOrder.length;
 
-    const withinWindow = (when) => {
-      if (!when) return true;                    // no date on the stub — decide from the order
-      const days = (new Date(when) - Date.now()) / 86400000;
-      return days >= -window && days <= window;
+    // What /orders answers with is a stub: id, show, modified. Nothing about
+    // when the job is, who is on it, or what it is worth — all of that costs a
+    // call each. Over a year that is thousands of calls, so the only sane
+    // filter is the one ISN gives us: has this order changed since we read it?
+    const known = new Map(
+      (await q(`SELECT isn_order_id, isn_modified FROM isn_orders`)).rows
+        .map((row) => [row.isn_order_id, row.isn_modified])
+    );
+    const unchanged = (stub) => {
+      const mine = known.get(String(stub.id));
+      if (!mine || !stub.modified) return false;
+      return Math.abs(new Date(stub.modified) - new Date(mine)) < 1000;
     };
 
     // One pass per order, whichever source named it. A footprint points at its
-    // order through `order`; an order names itself through `id`.
-    // On a shared ISN most of these orders belong to other branches. Skipping
-    // them here saves a call each, and there is no point caching another
-    // office's clients.
-    const ours = c.isn_office_id || null;
-    const mine = (o) => !ours || !o?.office || String(o.office) === ours;
-
+    // order through `order`; an order names itself through `id`. Footprints are
+    // ISN telling us something is upcoming, so they are never skipped.
     const work = new Map();
-    for (const o of everyOrder) {
-      if (o?.id && withinWindow(o.datetime) && mine(o)) work.set(String(o.id), null);
-    }
     for (const fp of footprints) {
       if (fp?.order) work.set(String(fp.order), fp.id ?? null);
     }
 
+    let alreadyHave = 0;
+    const fresh = [];
+    for (const o of everyOrder) {
+      if (!o?.id) continue;
+      if (work.has(String(o.id))) continue;
+      if (unchanged(o)) { alreadyHave += 1; continue; }
+      fresh.push(o);
+    }
+
+    // Newest first, so a run that hits its ceiling has read the work most
+    // likely to be coming up rather than the oldest history.
+    fresh.sort((a, b) => String(b.modified ?? '').localeCompare(String(a.modified ?? '')));
+    const ceiling = Number(c.max_orders_per_pull || 600);
+    counts.unchanged = alreadyHave;
+    counts.remaining = Math.max(0, fresh.length - ceiling);
+    for (const o of fresh.slice(0, ceiling)) work.set(String(o.id), null);
+
     for (const [orderId, footprintId] of work) {
       try {
         const order = unwrap(await getOrder(orderId), 'order');
+
+        // The list stub says nothing about which branch an order belongs to,
+        // so on a shared ISN this is the first point at which we can tell.
+        const ours = c.isn_office_id || null;
+        if (ours && order?.office && String(order.office) !== ours) {
+          counts.skippedOffice += 1;
+          if (footprintId) { await dropFootprint(footprintId); counts.deleted += 1; }
+          continue;
+        }
+
         const leadInspector = Array.from({ length: 10 }, (_, i) => order[`inspector${i + 1}`])
           .find((x) => x);
         const [client, agent, inspector] = await Promise.all([
@@ -737,7 +773,7 @@ export async function syncOnce({ source = 'schedule' } = {}) {
                 client_name, client_phone, client_email, agent_name, agent_email,
                 services, sold_services, has_radon, radon_fee, radon_reason, order_status,
                 isn_office_id, total_fee, paid, crew_isn_ids, crew_employee_ids,
-                raw, last_pulled_at)
+                isn_modified, raw, last_pulled_at)
              VALUES ($1,$2,$3,$4,$5,$6,$7,
                      (SELECT id FROM employees WHERE isn_user_id = $6 LIMIT 1),
                      $8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,
@@ -746,7 +782,7 @@ export async function syncOnce({ source = 'schedule' } = {}) {
                      (SELECT COALESCE(array_agg(e2.id), '{}')
                         FROM unnest($29::text[]) AS x(isn_id)
                         JOIN employees e2 ON e2.isn_user_id = x.isn_id),
-                     $30::jsonb, now())
+                     $30, $31::jsonb, now())
              ON CONFLICT (isn_order_id) DO UPDATE SET
                scheduled_start = EXCLUDED.scheduled_start,
                scheduled_end   = EXCLUDED.scheduled_end,
@@ -771,6 +807,7 @@ export async function syncOnce({ source = 'schedule' } = {}) {
                paid            = EXCLUDED.paid,
                crew_isn_ids      = EXCLUDED.crew_isn_ids,
                crew_employee_ids = EXCLUDED.crew_employee_ids,
+               isn_modified      = EXCLUDED.isn_modified,
                raw             = EXCLUDED.raw,
                last_pulled_at  = now()
              RETURNING id, has_radon`,
@@ -781,7 +818,7 @@ export async function syncOnce({ source = 'schedule' } = {}) {
              o.client_name, o.client_phone, o.client_email, o.agent_name, o.agent_email,
              JSON.stringify(o.services), JSON.stringify(soldServices(order)),
              radon, radonFee(o.services), radonWhy, o.order_status, o.isn_office_id,
-             o.total_fee, o.paid, o.crew,
+             o.total_fee, o.paid, o.crew, o.isn_modified,
              JSON.stringify(order)]
           )).rows[0];
 
@@ -823,7 +860,9 @@ export async function syncOnce({ source = 'schedule' } = {}) {
               footprints_seen = $3, orders_upserted = $4, sets_created = $5,
               footprints_deleted = $6, detail = $7::jsonb WHERE id = $1`,
       [run.id, status, counts.footprints, counts.orders, counts.sets, counts.deleted,
-       JSON.stringify({ failures, listed: counts.listed, window, lookback })]
+       JSON.stringify({ failures, listed: counts.listed, unchanged: counts.unchanged,
+                        remaining: counts.remaining, skippedOffice: counts.skippedOffice,
+                        window, lookback })]
     );
     await q(
       `UPDATE isn_connection SET last_sync_at = now(), last_sync_status = $1,

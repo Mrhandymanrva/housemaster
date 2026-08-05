@@ -113,12 +113,13 @@ r.get('/order-lookup', requireAuth, requireRole('office'), wrap(async (req, res)
       verdict: live?.error
         ? `Not in our copy, and asking ISN failed: ${live.error}`
         : live?.present
-          ? 'ISN does list this order — so the pull is dropping it rather than missing it. '
-            + 'Press Pull now; if it is still absent after that, the filter is the problem.'
-          : `Not in our copy, and ISN's order list does not include it either — `
-            + `that list came back with ${live?.listed ?? 0} orders covering `
-            + `${live?.earliest || 'nothing'} to ${live?.latest || 'nothing'}. `
-            + 'Widen how far back the pull looks.',
+          ? 'ISN lists this order, so the pull is dropping it rather than missing it.'
+          : live?.canMatchByNumber === false
+            ? `Not in our copy yet. ISN's order list is ${live.listed} stubs carrying only `
+              + `id, show and modified — no order number — so it cannot say whether this one `
+              + `is among them. Every unread order costs its own call; the pull reads the `
+              + `most recently changed first and works back, so give it a pull or two.`
+            : `Not in our copy, and ISN's list of ${live?.listed ?? 0} does not include it.`,
     });
   }
 
