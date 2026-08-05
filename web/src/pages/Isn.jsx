@@ -251,7 +251,9 @@ export default function Isn() {
                 marginTop: 10, padding: 14, background: 'var(--surface-2)',
                 border: '1px solid var(--line)', borderRadius: 'var(--r-sm)',
                 fontSize: 12.5, fontFamily: 'var(--mono)', overflowX: 'auto', whiteSpace: 'pre-wrap',
-              }}>{JSON.stringify(lookup.order || lookup.lastPull, null, 2)}</pre>
+              }}>{JSON.stringify(
+                lookup.cached ? lookup.order : { lastPull: lookup.lastPull, isnSays: lookup.live },
+                null, 2)}</pre>
             </div>
           )}
 

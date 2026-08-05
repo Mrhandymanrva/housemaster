@@ -385,6 +385,43 @@ export const unwrap = (payload, key) =>
 export const getOrders = (after) =>
   call(`/orders${after ? `?after=${encodeURIComponent(after)}` : ''}`);
 
+/**
+ * Does ISN's order list contain this order number?
+ *
+ * "We do not hold it" and "we were never offered it" call for opposite fixes,
+ * and from the outside they look the same. This asks the question the sync
+ * asks, over a deliberately long lookback, and reports what came back —
+ * including the field names, because whether the list carries a date at all
+ * decides whether the window filter does anything.
+ */
+export async function listedByIsn(number, { lookbackDays = 365 } = {}) {
+  const after = new Date(Date.now() - lookbackDays * 86400000).toISOString();
+  const orders = extractList(await getOrders(after), 'orders');
+
+  const wanted = String(number);
+  const match = orders.find((o) =>
+    String(o?.oid ?? '') === wanted || String(o?.id ?? '') === wanted
+    || String(o?.reportnumber ?? '') === wanted);
+
+  const dates = orders.map((o) => asDate(o?.datetime)).filter(Boolean).sort((a, b) => a - b);
+  const iso = (d) => (d ? d.toISOString().slice(0, 10) : null);
+
+  return {
+    lookbackDays,
+    listed: orders.length,
+    present: Boolean(match),
+    earliest: iso(dates[0]),
+    latest: iso(dates[dates.length - 1]),
+    withDates: dates.length,
+    // If the list is stubs there is no date to filter on, and every listed
+    // order gets fetched in full — worth knowing before blaming the window.
+    listFields: orders[0] && typeof orders[0] === 'object' ? Object.keys(orders[0]) : [],
+    match: match
+      ? { id: match.id, oid: match.oid, datetime: match.datetime, office: match.office }
+      : null,
+  };
+}
+
 // --------------------------------------------------------------- mapping
 
 /**

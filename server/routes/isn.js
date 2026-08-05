@@ -3,7 +3,8 @@ import { Router } from 'express';
 import { q, tx } from '../lib/db.js';
 import { wrap, bad } from '../lib/http.js';
 import { requireAuth, requireRole } from '../lib/auth.js';
-import { syncOnce, probe, getMe, extractList, unwrap, refreshUsers } from '../integrations/isn.js';
+import { syncOnce, probe, getMe, extractList, unwrap, refreshUsers, listedByIsn }
+  from '../integrations/isn.js';
 import { isnScheduleState } from '../isnSchedule.js';
 import { officeRanges } from '../lib/zone.js';
 
@@ -92,11 +93,15 @@ r.get('/order-lookup', requireAuth, requireRole('office'), wrap(async (req, res)
   const run = lastRun.rows[0] || null;
 
   if (!o) {
+    // Not holding it is only half an answer. Ask ISN the same question the
+    // sync asks and see whether the order is in the reply at all — that
+    // settles "we dropped it" against "we were never offered it" without
+    // another deploy.
+    const live = await listedByIsn(number).catch((e) => ({ error: e.message }));
+
     return res.json({
       number,
       cached: false,
-      // The most useful thing when an order is simply absent: how many the
-      // last pull even looked at. A round number is a cap, not a coincidence.
       lastPull: run && {
         at: run.started_at, status: run.status,
         ordersListed: run.detail?.listed ?? null,
@@ -104,7 +109,16 @@ r.get('/order-lookup', requireAuth, requireRole('office'), wrap(async (req, res)
         footprintsSeen: run.footprints_seen,
         lookbackDays: run.detail?.lookback ?? null,
       },
-      verdict: 'That order is not in our copy at all — it was never listed by the pull.',
+      live,
+      verdict: live?.error
+        ? `Not in our copy, and asking ISN failed: ${live.error}`
+        : live?.present
+          ? 'ISN does list this order — so the pull is dropping it rather than missing it. '
+            + 'Press Pull now; if it is still absent after that, the filter is the problem.'
+          : `Not in our copy, and ISN's order list does not include it either — `
+            + `that list came back with ${live?.listed ?? 0} orders covering `
+            + `${live?.earliest || 'nothing'} to ${live?.latest || 'nothing'}. `
+            + 'Widen how far back the pull looks.',
     });
   }
 
