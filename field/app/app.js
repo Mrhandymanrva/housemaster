@@ -335,9 +335,15 @@ const clock = (iso) => {
 const dayName = (iso) => {
   if (!iso) return '';
   const d = new Date(iso);
-  const today = new Date();
-  if (d.toDateString() === today.toDateString()) return 'Today';
-  return d.toLocaleDateString([], { weekday: 'long' });
+  const midnight = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate());
+  const days = Math.round((midnight(d) - midnight(new Date())) / 86400000);
+  if (days === 0) return 'Today';
+  if (days === 1) return 'Tomorrow';
+  if (days === -1) return 'Yesterday';
+  // Inside a week a weekday name is unambiguous; past that it is not.
+  return Math.abs(days) < 7
+    ? d.toLocaleDateString([], { weekday: 'long' })
+    : d.toLocaleDateString([], { month: 'short', day: 'numeric' });
 };
 
 /**
@@ -905,11 +911,12 @@ function fieldControl(f, ctx = { mode: 'none' }) {
     sel.append(el(`<option value="">${jobs.length
       ? 'Choose the job…' : 'No radon jobs scheduled for you'}</option>`));
     for (const j of jobs) {
+      // A week of jobs in one list, so a bare time is ambiguous — every option
+      // has to say which day it is.
       const when = j.scheduled_start
-        ? new Date(j.scheduled_start).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
-        : '';
-      const label = [j.property_address, j.property_city].filter(Boolean).join(', ')
-        + (when ? ` · ${when}` : '')
+        ? `${dayName(j.scheduled_start)} ${clock(j.scheduled_start)}`
+        : 'No time set';
+      const label = `${when} · ${[j.property_address, j.property_city].filter(Boolean).join(', ')}`
         + (j.radon_status === 'Deployed' ? ' · already placed' : '');
       const opt = el(`<option value="${esc(j.id)}">${esc(label)}</option>`);
       if (state.draft.isn_order_uuid === j.id) opt.selected = true;

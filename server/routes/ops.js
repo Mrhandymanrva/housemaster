@@ -430,10 +430,10 @@ r.get('/field/radon-jobs', requireAuth, wrap(async (req, res) => {
       WHERE o.has_radon
         AND o.order_status NOT IN ('Canceled', 'Deleted', 'Unscheduled')
         AND ($1::uuid IS NULL OR $1 = ANY(o.crew_employee_ids))
-        -- yesterday through the next few days: a set placed this morning may
-        -- still be being written up, and tomorrow's is worth seeing tonight
+        -- yesterday through the week ahead: a set placed this morning may still
+        -- be being written up, and techs pick up work further out than a day
         AND o.scheduled_start >= now() - interval '1 day'
-        AND o.scheduled_start <  now() + interval '4 days'
+        AND o.scheduled_start <  now() + interval '7 days'
       ORDER BY o.scheduled_start
       LIMIT 60`, [who]);
 
