@@ -403,6 +403,44 @@ r.get('/field/jobs', requireAuth, wrap(async (req, res) => {
 }));
 
 /**
+ * The radon placements this inspector is due to make.
+ *
+ * Straight off the orders rather than off drafted sets, so a job counts as
+ * theirs if they are anywhere on its crew and shows up whether or not the
+ * office has drafted the set yet. Picking one on the phone is what ties the
+ * placement back to the order it was sold on.
+ */
+r.get('/field/radon-jobs', requireAuth, wrap(async (req, res) => {
+  const employeeId = req.user.employee_id || null;
+  const maySeeAll = ['owner', 'admin'].includes(req.user.role);
+  const seeAll = maySeeAll && req.query.scope !== 'me';
+  const who = seeAll ? null : employeeId;
+  if (!seeAll && !employeeId) return res.json({ jobs: [] });
+
+  const { rows } = await q(
+    `SELECT o.id, o.order_number, o.scheduled_start,
+            o.property_address, o.property_city, o.property_state, o.property_zip,
+            o.client_name, o.foundation_type,
+            t.id AS radon_test_id, t.status AS radon_status,
+            COALESCE(e.full_name, o.inspector_name) AS inspector
+       FROM isn_orders o
+       LEFT JOIN radon_tests t
+              ON t.isn_order_uuid = o.id AND t.status <> 'Voided'
+       LEFT JOIN employees e ON e.id = o.employee_id
+      WHERE o.has_radon
+        AND o.order_status NOT IN ('Canceled', 'Deleted', 'Unscheduled')
+        AND ($1::uuid IS NULL OR $1 = ANY(o.crew_employee_ids))
+        -- yesterday through the next few days: a set placed this morning may
+        -- still be being written up, and tomorrow's is worth seeing tonight
+        AND o.scheduled_start >= now() - interval '1 day'
+        AND o.scheduled_start <  now() + interval '4 days'
+      ORDER BY o.scheduled_start
+      LIMIT 60`, [who]);
+
+  res.json({ jobs: rows, scope: seeAll ? 'branch' : 'me' });
+}));
+
+/**
  * The kit signed out to this person.
  *
  * A tech knows a ladder is bent the moment they pick it up, and the office

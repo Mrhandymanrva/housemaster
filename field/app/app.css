@@ -262,6 +262,7 @@ body {
 .field label { display: block; font-weight: 600; font-size: 15px; margin-bottom: 6px; }
 .field .need { color: var(--red); font-weight: 500; font-size: 13px; }
 .field .help { font-size: 13px; color: var(--text-2); margin-top: 5px; }
+.field .typed { margin-top: 8px; }
 input, select, textarea {
   width: 100%; font: inherit; color: var(--text);
   background: var(--surface); border: 1px solid var(--line-2);

@@ -21,6 +21,7 @@ const LS = {
   ledger: 'hm_field_ledger',
   today: 'hm_field_today',
   kit: 'hm_field_kit',
+  radonJobs: 'hm_field_radon_jobs',
   scope: 'hm_field_scope',
   queue: 'hm_field_queue',
   device: 'hm_field_device',
@@ -41,6 +42,7 @@ const state = {
   today: read(LS.today, null),
   jobs: null,
   kit: read(LS.kit, null),
+  radonJobs: read(LS.radonJobs, []),
   scope: localStorage.getItem('hm_field_scope') || null,
   route: { name: 'home' },
   draft: {},
@@ -105,12 +107,13 @@ async function flush() {
 
 // --------------------------------------------------------------- loading
 async function refresh() {
-  const [cfg, rem, led, day, kit] = await Promise.allSettled([
+  const [cfg, rem, led, day, kit, rjobs] = await Promise.allSettled([
     api('/ops/field/config'),
     api('/ops/field/reminders'),
     api('/radon/ledger'),
     api(`/ops/field/today${state.scope === 'me' ? '?scope=me' : ''}`),
     api(`/ops/field/equipment${state.scope === 'me' ? '?scope=me' : ''}`),
+    api('/ops/field/radon-jobs?scope=me'),
   ]);
   if (day.status === 'fulfilled') {
     state.today = day.value;
@@ -119,6 +122,12 @@ async function refresh() {
   if (kit.status === 'fulfilled') {
     state.kit = kit.value;
     write(LS.kit, state.kit);
+  }
+  // Always this inspector's own radon jobs, even for an owner looking at the
+  // branch — you place a monitor yourself or you do not place it.
+  if (rjobs.status === 'fulfilled') {
+    state.radonJobs = rjobs.value.jobs || [];
+    write(LS.radonJobs, state.radonJobs);
   }
   if (cfg.status === 'fulfilled') {
     state.modules = cfg.value.modules || [];
@@ -868,6 +877,69 @@ function fieldControl(f, ctx = { mode: 'none' }) {
     b.onclick = () => { set(!on); render(); };
     box.append(b);
 
+  } else if (t === 'radon_device') {
+    // Only the radon monitors — the same list the duplicate rule reads, so a
+    // monitor that can be picked is always one the rule knows the count for.
+    const sel = el(`<select id="f_${esc(f.key)}"></select>`);
+    sel.append(el('<option value="">Choose one…</option>'));
+    const taken = f.key === 'duplicate_device' ? state.draft.primary_device : null;
+    for (const d of state.ledger) {
+      if (d.equipmentId === taken) continue;      // the pair has to be two units
+      const seq = d.completedSets != null ? ` — next is set ${d.completedSets + (d.localSetsSinceSync || 0) + 1}` : '';
+      const opt = el(`<option value="${esc(d.equipmentId)}">${esc(d.name)}${esc(seq)}</option>`);
+      if (state.draft[f.key] === d.equipmentId) opt.selected = true;
+      sel.append(opt);
+    }
+    if (!state.ledger.length) {
+      sel.disabled = true;
+      sel.firstElementChild.textContent = 'No radon monitors on file';
+    }
+    sel.onchange = (e) => { set(e.target.value); render(); };
+    box.append(sel);
+
+  } else if (t === 'radon_job') {
+    // The inspector's own radon placements. Picking one fills the address and
+    // ties the set to the order it was sold on.
+    const jobs = state.radonJobs || [];
+    const sel = el(`<select id="f_${esc(f.key)}"></select>`);
+    sel.append(el(`<option value="">${jobs.length
+      ? 'Choose the job…' : 'No radon jobs scheduled for you'}</option>`));
+    for (const j of jobs) {
+      const when = j.scheduled_start
+        ? new Date(j.scheduled_start).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+        : '';
+      const label = [j.property_address, j.property_city].filter(Boolean).join(', ')
+        + (when ? ` · ${when}` : '')
+        + (j.radon_status === 'Deployed' ? ' · already placed' : '');
+      const opt = el(`<option value="${esc(j.id)}">${esc(label)}</option>`);
+      if (state.draft.isn_order_uuid === j.id) opt.selected = true;
+      sel.append(opt);
+    }
+    const other = el(`<option value="__other__">Not on the list — type it</option>`);
+    if (state.draft.isn_order_uuid === null && state.draft[f.key]) other.selected = true;
+    sel.append(other);
+
+    sel.onchange = (e) => {
+      if (e.target.value === '__other__') {
+        state.draft.isn_order_uuid = null;
+        set('');
+      } else {
+        const job = jobs.find((x) => x.id === e.target.value);
+        state.draft.isn_order_uuid = job?.id ?? undefined;
+        set(job ? [job.property_address, job.property_city].filter(Boolean).join(', ') : '');
+      }
+      render();
+    };
+    box.append(sel);
+
+    // Typed by hand only when the job genuinely is not on the list.
+    if (state.draft.isn_order_uuid === null) {
+      const typed = el(`<input class="typed" placeholder="Property address" />`);
+      typed.value = state.draft[f.key] || '';
+      typed.oninput = (e) => set(e.target.value);
+      box.append(typed);
+    }
+
   } else if (t === 'select' || REF_ENTITY[t]) {
     const opts = REF_ENTITY[t]
       ? (state.options[REF_ENTITY[t]] || []).map((o) => ({ value: o.id, label: o.label }))
@@ -967,6 +1039,9 @@ async function submit(mod, fields) {
 
   const payload = {};
   for (const f of shown) if (state.draft[f.key] !== undefined) payload[f.key] = state.draft[f.key];
+  // Not a question on the form — the job the address came from, so the set
+  // joins the order rather than floating loose beside it.
+  if (state.draft.isn_order_uuid) payload.isn_order_uuid = state.draft.isn_order_uuid;
 
   // What the phone believed when the tech hit send. If it turns out to have
   // been wrong — an offline set that actually owed a duplicate — this is what
