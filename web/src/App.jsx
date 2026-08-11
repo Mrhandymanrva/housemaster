@@ -8,25 +8,44 @@ import Home from './pages/Home.jsx';
 import Attention from './pages/Attention.jsx';
 import RecordsHub from './pages/RecordsHub.jsx';
 import Records from './pages/Records.jsx';
-import FieldSetup from './pages/FieldSetup.jsx';
 import Radon from './pages/Radon.jsx';
 import Inbox from './pages/Inbox.jsx';
-import Team from './pages/Team.jsx';
-import Setup from './pages/Setup.jsx';
-import Isn from './pages/Isn.jsx';
+import Settings from './pages/Settings.jsx';
+import Money from './pages/Money.jsx';
+import CommandBar from './components/CommandBar.jsx';
 
-/* Where you can go. `min` hides a destination from anyone below that role. */
+/*
+ * Where you can go, in four groups.
+ *
+ * It was nine flat destinations, four of which are things you configure once a
+ * month sitting at eye level with the screens you open every morning — so
+ * every glance at the nav was a small sorting task. The groups separate where
+ * you work from what you set up, and those four fold into one Settings page
+ * with tabs. Nothing about the routing changed; the same pages render.
+ *
+ * `min` hides a destination from anyone below that role.
+ */
 const NAV = [
-  { key: 'home',      label: 'Home',            icon: 'home' },
-  { key: 'attention', label: 'Needs attention', icon: 'alert' },
-  { key: 'radon',     label: 'Radon',           icon: 'gauge' },
-  { key: 'records',   label: 'Records',         icon: 'table' },
-  { key: 'inbox',     label: 'From the field',  icon: 'inbox' },
-  { key: 'field',     label: 'Phone app',       icon: 'phone' },
-  { key: 'isn',       label: 'ISN link',        icon: 'app', min: 'office' },
-  { key: 'setup',     label: 'Dropdown lists',  icon: 'settings', min: 'admin' },
-  { key: 'team',      label: 'Logins',          icon: 'users', min: 'admin' },
+  ['Today', [
+    { key: 'home',      label: 'Home',            icon: 'home' },
+    { key: 'attention', label: 'Needs attention', icon: 'alert' },
+    { key: 'inbox',     label: 'From the field',  icon: 'inbox' },
+  ]],
+  ['Owner', [
+    { key: 'money',     label: 'Money',           icon: 'ledger', min: 'admin' },
+  ]],
+  ['Work', [
+    { key: 'radon',     label: 'Radon',           icon: 'gauge' },
+    { key: 'records',   label: 'Records',         icon: 'table' },
+  ]],
+  ['Setup', [
+    { key: 'settings',  label: 'Settings',        icon: 'settings', min: 'office' },
+  ]],
 ];
+
+/* The old destinations still answer, as tabs inside Settings, so anything that
+   linked to one of them keeps working. */
+const FOLDED = { field: 'field', isn: 'isn', setup: 'lists', team: 'logins' };
 
 const RANK = { field: 1, office: 2, admin: 3, owner: 4 };
 const allowed = (n, role) => !n.min || (RANK[role] || 0) >= RANK[n.min];
@@ -37,10 +56,8 @@ const PAGE = {
   radon:     ['Radon', 'Sets in the field, results, chain of custody, and where each monitor stands on its quality checks.'],
   records:   ['Records', 'All the information you keep. Pick something to look at.'],
   inbox:     ['From the field', 'What your people sent in from their phones, waiting on you.'],
-  field:     ['Phone app', 'Decide what your people see on their phones. Changes show up the next time they open it.'],
-  team:      ['Logins', 'Who can sign in, and what each of them is allowed to do.'],
-  isn:       ['ISN link', 'Where the jobs come from, and which inspector is which.'],
-  setup:     ['Dropdown lists', 'The choices behind every dropdown in the app. Change them here and they change everywhere they are used.'],
+  settings:  ['Settings', 'The parts you set up once and leave alone: the phone app, the ISN link, your dropdown lists, and who can sign in.'],
+  money:     ['Money', 'What the branch booked, what has come in, and what the app can see it costing. Only you and your admins can open this.'],
 };
 
 const initials = (n = '') => n.split(' ').map((w) => w[0]).slice(0, 2).join('').toUpperCase();
@@ -51,6 +68,9 @@ export default function App() {
   );
   const [cat, setCat] = useState([]);
   const [route, setRoute] = useState('home');
+  // The command bar can land you on a specific record, not just its screen.
+  const [openRecord, setOpenRecord] = useState(null);
+  const go = (to, id = null) => { setRoute(to); setOpenRecord(id); };
   const [pending, setPending] = useState(0);
   const [overdue, setOverdue] = useState(0);
 
@@ -69,9 +89,13 @@ export default function App() {
 
   if (!user) return <Login onIn={setUser} />;
 
-  const entity = route.startsWith('records:') ? cat.find((e) => e.key === route.slice(8)) : null;
-  const nav = entity ? 'records' : route;
-  const [title, sub] = entity ? [plainName(entity), plainDesc(entity)] : PAGE[route];
+  // A link to one of the folded-away screens lands on Settings with that tab open.
+  const settingsTab = FOLDED[route] || null;
+  const here = settingsTab ? 'settings' : route;
+
+  const entity = here.startsWith('records:') ? cat.find((e) => e.key === here.slice(8)) : null;
+  const nav = entity ? 'records' : here;
+  const [title, sub] = entity ? [plainName(entity), plainDesc(entity)] : (PAGE[here] || PAGE.home);
   const counts = { inbox: pending, attention: overdue };
 
   return (
@@ -85,13 +109,22 @@ export default function App() {
           </div>
         </div>
 
-        {NAV.filter((n) => allowed(n, user.role)).map((n) => (
-          <button key={n.key} className={`nav-item ${nav === n.key ? 'active' : ''}`}
-                  onClick={() => setRoute(n.key)}>
-            <Icon name={n.icon} size={19} /> {n.label}
-            {counts[n.key] > 0 && <span className="count">{counts[n.key]}</span>}
-          </button>
-        ))}
+        {NAV.map(([group, items]) => {
+          const mine = items.filter((n) => allowed(n, user.role));
+          if (!mine.length) return null;
+          return (
+            <div key={group} className="nav-group">
+              <div className="nav-group-label">{group}</div>
+              {mine.map((nn) => (
+                <button key={nn.key} className={`nav-item ${nav === nn.key ? 'active' : ''}`}
+                        onClick={() => setRoute(nn.key)}>
+                  <Icon name={nn.icon} size={19} /> {nn.label}
+                  {counts[nn.key] > 0 && <span className="count">{counts[nn.key]}</span>}
+                </button>
+              ))}
+            </div>
+          );
+        })}
 
         <div className="rail-foot">
           <div className="who">
@@ -121,18 +154,23 @@ export default function App() {
         </header>
 
         <div className="content">
-          {route === 'home' && <Home go={setRoute} name={user.name} />}
-          {route === 'attention' && <Attention />}
-          {route === 'radon' && <Radon />}
-          {route === 'records' && <RecordsHub entities={cat} go={setRoute} />}
-          {route === 'inbox' && <Inbox onCount={setPending} />}
-          {route === 'field' && <FieldSetup />}
-          {route === 'team' && allowed({ min: 'admin' }, user.role) && <Team me={user} />}
-          {route === 'setup' && allowed({ min: 'admin' }, user.role) && <Setup />}
-          {route === 'isn' && allowed({ min: 'office' }, user.role) && <Isn />}
-          {entity && <Records key={entity.key} entity={entity} />}
+          {here === 'home' && <Home go={go} name={user.name} />}
+          {here === 'attention' && <Attention />}
+          {here === 'radon' && <Radon />}
+          {here === 'records' && <RecordsHub entities={cat} go={go} />}
+          {here === 'inbox' && <Inbox onCount={setPending} />}
+          {here === 'money' && allowed({ min: 'admin' }, user.role) && <Money />}
+          {here === 'settings' && allowed({ min: 'office' }, user.role) && (
+            <Settings user={user} tab={settingsTab} />
+          )}
+          {entity && (
+            <Records key={entity.key} entity={entity}
+                     openId={openRecord} onOpened={() => setOpenRecord(null)} />
+          )}
         </div>
       </main>
+
+      <CommandBar entities={cat} go={go} canSeeMoney={allowed({ min: 'admin' }, user.role)} />
     </div>
   );
 }

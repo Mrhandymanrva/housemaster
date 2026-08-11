@@ -9,7 +9,7 @@ import { plainName, singular } from '../lib/plain.js';
 /** Kept in step with NO_IMPORT in server/routes/records.js. */
 const NO_IMPORT = new Set(['radon_custody_events', 'radon_deployments', 'inventory_transactions']);
 
-export default function Records({ entity }) {
+export default function Records({ entity, openId = null, onOpened }) {
   const [rows, setRows] = useState([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -33,6 +33,18 @@ export default function Records({ entity }) {
   }, [entity.key, search, sort]);
 
   useEffect(() => { setSearch(''); setSort(null); setWide(false); }, [entity.key]);
+
+  // Arrived here from the command bar with a record in mind. Fetched by id
+  // rather than hunted for in the list, which only holds the first fifty.
+  useEffect(() => {
+    if (!openId) return;
+    let live = true;
+    api(`/records/${entity.key}/${openId}`)
+      .then((d) => { if (live) setOpen(d.record); })
+      .catch((e) => setErr(e.message))
+      .finally(() => onOpened?.());
+    return () => { live = false; };
+  }, [openId, entity.key]);
   useEffect(() => { const t = setTimeout(load, search ? 220 : 0); return () => clearTimeout(t); }, [load, search]);
 
   const toggleSort = (col) => setSort((s) => (s === `${col}:asc` ? `${col}:desc` : `${col}:asc`));

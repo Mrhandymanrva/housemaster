@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../lib/api.js';
 import Icon from '../components/Icons.jsx';
-import { date, num, whenText } from '../lib/format.js';
+import { date, num, n, whenText } from '../lib/format.js';
 
 /* One big number, one sentence under it, and it takes you somewhere. */
 function Status({ tone, icon, big, small, onClick }) {
@@ -115,7 +115,7 @@ export default function Home({ go }) {
           </div>
           <div className="card-body" style={{ display: 'grid', gap: 18 }}>
             {d.readiness.map((r) => {
-              const stuck = r.licenses_expired > 0 || r.dl_expired;
+              const stuck = n(r.licenses_expired) > 0 || r.dl_expired;
               // Postgres hands numerics back as strings, so "0" is truthy and
               // 0 of 0 came out NaN \u2014 which is how somebody who owes no hours
               // at all ended up with a full red bar against their name.

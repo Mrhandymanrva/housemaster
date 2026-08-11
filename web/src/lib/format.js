@@ -1,3 +1,30 @@
+/**
+ * The office's clock, which is the one every date in this app means.
+ *
+ * The server hands back instants — the office's midnight as a moment in time.
+ * Rendered in the viewer's own zone those slide, and a month boundary slides
+ * into the month before. Anything that names a day or a month says which
+ * clock it is reading.
+ */
+export const OFFICE_ZONE = 'America/New_York';
+
+/**
+ * A number out of the database, as a number.
+ *
+ * Postgres hands numerics back as strings, so "0" is truthy and "0" / "0" is
+ * NaN. That is how somebody who owed no CEU hours at all ended up with a full
+ * red bar against their name. Every place a numeric is compared or arithmetic
+ * happens goes through here, so that bug cannot come back one screen at a time.
+ *
+ * Formatting is separate on purpose: money() and num() below turn a value into
+ * something to read, this turns it into something to do sums with.
+ */
+export const n = (v, fallback = 0) => {
+  if (v === null || v === undefined || v === '') return fallback;
+  const x = Number(v);
+  return Number.isFinite(x) ? x : fallback;
+};
+
 export const money = (v) =>
   v == null || v === '' ? '—'
   : new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(v);
