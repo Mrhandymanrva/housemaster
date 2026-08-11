@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../lib/api.js';
 import Icon from '../components/Icons.jsx';
+import { ROLES, atLeast } from '../lib/roles.js';
 
 /* What each role can actually do, in the words someone would use out loud. */
 const ROLE_MEANS = {
@@ -9,8 +10,8 @@ const ROLE_MEANS = {
   admin: 'Everything above, plus deleting records, setting up the phone app, and managing these logins.',
   owner: 'Everything. Only an owner can make another owner.',
 };
-const ROLES = ['field', 'office', 'admin', 'owner'];
-const RANK = { field: 1, office: 2, admin: 3, owner: 4 };
+
+
 
 const lastSeen = (iso) => {
   if (!iso) return 'Has not signed in yet';
@@ -83,7 +84,7 @@ export default function Team({ me }) {
       say('Your password is changed.');
     });
 
-  const canEdit = (u) => RANK[u.app_role] <= RANK[me.role];
+  const canEdit = (u) => atLeast(me.role, u.app_role);
 
   return (
     <div className="stack">
@@ -151,7 +152,7 @@ export default function Team({ me }) {
                 <label htmlFor="nr">Can do</label>
                 <select id="nr" className="input" value={draft.app_role}
                         onChange={(e) => setDraft({ ...draft, app_role: e.target.value })}>
-                  {ROLES.filter((r) => RANK[r] <= RANK[me.role]).map((r) => (
+                  {ROLES.filter((r) => atLeast(me.role, r)).map((r) => (
                     <option key={r} value={r}>{r}</option>
                   ))}
                 </select>
@@ -218,7 +219,7 @@ export default function Team({ me }) {
                         onChange={(e) => patch(u, { app_role: e.target.value },
                           `${u.full_name || u.email} is now ${e.target.value}.`)}
                       >
-                        {ROLES.filter((rl) => RANK[rl] <= RANK[me.role] || rl === u.app_role).map((rl) => (
+                        {ROLES.filter((rl) => atLeast(me.role, rl) || rl === u.app_role).map((rl) => (
                           <option key={rl} value={rl}>{rl}</option>
                         ))}
                       </select>

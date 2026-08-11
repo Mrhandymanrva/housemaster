@@ -10,11 +10,11 @@ import bcrypt from 'bcryptjs';
 import { q } from '../lib/db.js';
 import { wrap, bad, notFound, forbidden } from '../lib/http.js';
 import { requireAuth, requireRole, hash } from '../lib/auth.js';
+import { ROLES, RANK } from '../../field/app/roles.js';
 
 const r = Router();
 
-const ROLES = ['field', 'office', 'admin', 'owner'];
-const RANK = { field: 1, office: 2, admin: 3, owner: 4 };
+// One definition, shared with the phone. See field/roles.js.
 
 /** Everything about a login except the one column that must never leave. */
 const SHAPE = `u.id, u.email, u.app_role, u.active, u.last_login_at, u.created_at,

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { api, getToken, setToken } from './lib/api.js';
 import { DEMO } from './lib/demo.js';
 import { plainName, plainDesc } from './lib/plain.js';
+import { atLeast } from './lib/roles.js';
 import Icon from './components/Icons.jsx';
 import Login from './pages/Login.jsx';
 import Home from './pages/Home.jsx';
@@ -47,8 +48,7 @@ const NAV = [
    linked to one of them keeps working. */
 const FOLDED = { field: 'field', isn: 'isn', setup: 'lists', team: 'logins' };
 
-const RANK = { field: 1, office: 2, admin: 3, owner: 4 };
-const allowed = (n, role) => !n.min || (RANK[role] || 0) >= RANK[n.min];
+const allowed = (n, role) => !n.min || atLeast(role, n.min);
 
 const PAGE = {
   home:      ['Home', "Where everything stands this morning."],

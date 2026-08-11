@@ -3,6 +3,7 @@ import FieldSetup from './FieldSetup.jsx';
 import Isn from './Isn.jsx';
 import Lists from './Setup.jsx';
 import Team from './Team.jsx';
+import { atLeast } from '../lib/roles.js';
 
 /**
  * The four things you set up once and then leave alone.
@@ -26,10 +27,10 @@ const TABS = [
     hint: 'Who can sign in, and what each of them is allowed to do.' },
 ];
 
-const RANK = { field: 1, office: 2, admin: 3, owner: 4 };
+
 
 export default function Settings({ user, tab, onTab }) {
-  const allowed = TABS.filter((t) => (RANK[user.role] || 0) >= RANK[t.min]);
+  const allowed = TABS.filter((t) => atLeast(user.role, t.min));
   const [local, setLocal] = useState(allowed[0]?.key);
   const current = allowed.some((t) => t.key === tab) ? tab : local;
   const pick = (k) => { setLocal(k); onTab?.(k); };

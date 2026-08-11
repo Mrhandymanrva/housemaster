@@ -9,7 +9,8 @@ const SECRET = process.env.JWT_SECRET || 'dev-only-change-me';
 // that is printed in this file. Checked at startup rather than thrown on import,
 // so the message lands with the other startup errors instead of ahead of them.
 export const secretIsPlaceholder = () => !process.env.JWT_SECRET;
-const RANK = { field: 1, office: 2, admin: 3, owner: 4 };
+// One definition, shared with the phone. See field/roles.js.
+import { RANK, atLeast } from '../../field/app/roles.js';
 
 export const signToken = (user) =>
   jwt.sign(
@@ -56,7 +57,7 @@ export async function requireAuth(req, _res, next) {
 }
 
 export const requireRole = (min) => (req, _res, next) =>
-  (RANK[req.user?.role] || 0) >= RANK[min]
+  atLeast(req.user?.role, min)
     ? next()
     : next(forbidden(`This needs ${min} access or higher.`));
 

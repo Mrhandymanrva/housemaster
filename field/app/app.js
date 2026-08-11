@@ -11,6 +11,7 @@
  */
 import { decide, validateDeployment, advance, merge } from './qa-guard.js';
 import { installCard, installNudge } from './install.js';
+import { may } from './roles.js';
 
 const API = '/api';
 const LS = {
@@ -1082,8 +1083,12 @@ function homeScreen() {
   }
 
   // --------------------------------------------------------------- tiles
+  // may(), not includes(): a module's role list says who it was switched on
+  // for, and the owner is never off. Asked as a membership test, outranking
+  // everybody did not help — a form nobody had ticked for the owner was
+  // invisible to the person who runs the branch.
   const role = state.user?.role || 'field';
-  const mine = state.modules.filter((m) => m.enabled && (m.roles || []).includes(role));
+  const mine = state.modules.filter((m) => m.enabled && may(role, m.roles));
 
   body.append(el('<div class="section-label">Forms</div>'));
   if (!mine.length) {
