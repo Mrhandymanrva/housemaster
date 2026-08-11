@@ -116,7 +116,8 @@ export default function App() {
             <div key={group} className="nav-group">
               <div className="nav-group-label">{group}</div>
               {mine.map((nn) => (
-                <button key={nn.key} className={`nav-item ${nav === nn.key ? 'active' : ''}`}
+                <button key={nn.key} data-key={nn.key}
+                        className={`nav-item ${nav === nn.key ? 'active' : ''}`}
                         onClick={() => setRoute(nn.key)}>
                   <Icon name={nn.icon} size={19} /> {nn.label}
                   {counts[nn.key] > 0 && <span className="count">{counts[nn.key]}</span>}

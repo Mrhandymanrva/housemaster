@@ -110,6 +110,26 @@ button { font: inherit; color: inherit; }
 .nav-item:hover { background: var(--surface-3); color: var(--text); }
 .nav-item.active { background: var(--brand-bg); color: var(--brand); font-weight: 600; }
 .nav-item svg { flex: 0 0 auto; }
+
+/* Each destination's icon carries its own colour.
+ *
+ * The rail is the most-looked-at thing in the app and it was seven identical
+ * grey shapes, which makes finding one a reading task rather than a glance.
+ * Colour is doing the same job the group headings do — telling them apart
+ * before you read them.
+ *
+ * Stays inside the palette the rest of the app uses, so red is still only ever
+ * an alarm: what needs attention gets amber, not red, and the red count badge
+ * beside it keeps its meaning. The active item goes brand green as it always
+ * did, icon included, so being here still overrides being itself. */
+.nav-item[data-key="home"]      svg { color: var(--brand); }
+.nav-item[data-key="attention"] svg { color: var(--amber); }
+.nav-item[data-key="inbox"]     svg { color: var(--blue); }
+.nav-item[data-key="money"]     svg { color: var(--green); }
+.nav-item[data-key="radon"]     svg { color: var(--violet); }
+.nav-item[data-key="records"]   svg { color: var(--blue); }
+.nav-item[data-key="settings"]  svg { color: var(--text-3); }
+.nav-item.active svg { color: inherit; }
 .nav-item .count {
   margin-left: auto; min-width: 22px; height: 22px; padding: 0 6px;
   border-radius: 11px; background: var(--red); color: #fff;
