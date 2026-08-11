@@ -12,6 +12,21 @@ const ago = (iso) => {
   return `${d} ${d === 1 ? 'day' : 'days'} ago`;
 };
 
+/**
+ * What a pull window actually reaches.
+ *
+ * The number in the box is ISN's change filter; the sync multiplies it because
+ * a job booked in spring for a date in autumn has not been *touched* since
+ * spring. Showing the months is the only way the choice reads as a choice.
+ * Kept in step with the lookback in server/integrations/isn.js.
+ */
+const reach = (days) => {
+  const months = Math.max((Number(days) || 14) * 6, 120) / 30.44;
+  return months >= 11.5 && months < 12.5 ? 'a year'
+    : months >= 12.5 ? `${(months / 12).toFixed(1)} years`
+    : `${Math.round(months)} months`;
+};
+
 export default function Isn() {
   const [status, setStatus] = useState(null);
   const [roster, setRoster] = useState(null);
@@ -219,6 +234,40 @@ export default function Isn() {
                 <option value="60">Every hour</option>
                 <option value="240">Every 4 hours</option>
                 <option value="1440">Once a day</option>
+              </select>
+            </span>
+          </div>
+
+          {/*
+            * How deep the pull reaches.
+            *
+            * ISN's order list answers "what has changed since", not "what
+            * happened since", so this is the only thing deciding how far back
+            * the app can ever see. It was reachable only by someone with
+            * database access, which is why the Money screen had six months of
+            * history and no way to ask for more.
+            */}
+          <div className="setting" style={{ marginTop: 16 }}>
+            <div style={{ minWidth: 0 }}>
+              <b>How far back to look</b>
+              <span>
+                Reaches about {reach(c?.pull_window_days)} of history — ISN only lists orders
+                that have changed recently, so anything older than this has never been pulled
+                in and the app cannot report on it. Going deeper is a one-off catch-up: every
+                order it has not read costs a call, it does at most{' '}
+                {c?.max_orders_per_pull || 600} per pull, so it fills in over the next few
+                syncs and then goes quiet again.
+              </span>
+            </div>
+            <span style={{ marginLeft: 'auto' }}>
+              <select className="input" style={{ width: 'auto' }}
+                      value={c?.pull_window_days ?? 14}
+                      disabled={busy === 'conn'}
+                      onChange={(e) => patch({ pull_window_days: Number(e.target.value) },
+                        `Looking back about ${reach(Number(e.target.value))}. The next pull starts catching up.`)}>
+                {[14, 30, 45, 61, 90, 120].map((d) => (
+                  <option key={d} value={d}>{d} days — about {reach(d)}</option>
+                ))}
               </select>
             </span>
           </div>
