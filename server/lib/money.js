@@ -35,22 +35,29 @@ const REAL_WORK = `order_status NOT IN ('Canceled', 'Deleted', 'Unscheduled')
  * repair is not. Anything needing an assumption to include is left out and
  * named in the gaps list instead.
  */
+/*
+ * Each entry says which of the two dates its SQL actually uses, because
+ * Postgres wants the count to match exactly: a query with no placeholders
+ * handed two dates fails with "bind message supplies 2 parameters, but
+ * prepared statement requires 0", which is what the screen showed the first
+ * time it met a real database.
+ */
 const OVERHEAD = [
-  { key: 'vehicle', label: 'Van service and repairs',
+  { key: 'vehicle', label: 'Van service and repairs', args: 2,
     sql: `SELECT COALESCE(SUM(cost), 0) AS amount FROM vehicle_maintenance
            WHERE service_date >= $1::date AND service_date < $2::date` },
-  { key: 'calibration', label: 'Calibration and equipment service',
+  { key: 'calibration', label: 'Calibration and equipment service', args: 2,
     sql: `SELECT COALESCE(SUM(cost), 0) AS amount FROM maintenance_records
            WHERE service_date >= $1::date AND service_date < $2::date` },
-  { key: 'training', label: 'Continuing education',
+  { key: 'training', label: 'Continuing education', args: 2,
     sql: `SELECT COALESCE(SUM(cost), 0) AS amount FROM ceu_records
            WHERE completion_date >= $1::date AND completion_date < $2::date` },
-  { key: 'equipment', label: 'Equipment bought',
+  { key: 'equipment', label: 'Equipment bought', args: 2,
     sql: `SELECT COALESCE(SUM(purchase_price), 0) AS amount FROM equipment
            WHERE purchase_date >= $1::date AND purchase_date < $2::date` },
   // Recurring commitments are not dated into a month, so they are divided down
   // to what one month of them costs.
-  { key: 'software', label: 'Software',
+  { key: 'software', label: 'Software', args: 0,
     sql: `SELECT COALESCE(SUM(
               CASE lower(COALESCE(billing_frequency, 'monthly'))
                 WHEN 'annual' THEN cost / 12.0
@@ -60,12 +67,14 @@ const OVERHEAD = [
                 ELSE cost END), 0) AS amount
            FROM software_subscriptions
           WHERE status IS DISTINCT FROM 'Cancelled'` },
-  { key: 'insurance', label: 'Insurance',
+  { key: 'insurance', label: 'Insurance', args: 1,
     sql: `SELECT COALESCE(SUM(premium_amount) / 12.0, 0) AS amount
             FROM insurance_policies
            WHERE status IS DISTINCT FROM 'Cancelled'
              AND (expiration_date IS NULL OR expiration_date >= $1::date)` },
 ];
+
+export { OVERHEAD };
 
 /** Named on the screen, so nobody reads the total as the cost of the branch. */
 export const NOT_COUNTED = [
@@ -178,7 +187,7 @@ export async function moneyReport(client, range, { kinds = [], receivablesLimit 
            WHERE completed_date IS NULL AND due_date < CURRENT_DATE)       AS overdue`),
     client.query(`SELECT last_sync_at, enabled FROM isn_connection LIMIT 1`),
 
-    ...OVERHEAD.map((o) => client.query(o.sql, [day(monthStart), day(monthEnd)])),
+    ...OVERHEAD.map((o) => client.query(o.sql, [day(monthStart), day(monthEnd)].slice(0, o.args))),
   ]);
 
   const num = (v) => Number(v) || 0;
@@ -193,8 +202,9 @@ export async function moneyReport(client, range, { kinds = [], receivablesLimit 
   // passed for the projection to mean anything.
   const running = now < monthEnd;
   const elapsed = range.elapsed ?? (now - monthStart);
-  const pace = running && elapsed > 0.15 * (range.total || (monthEnd - monthStart))
-    ? Math.round((num(h.booked) / elapsed) * (range.total || (monthEnd - monthStart)))
+  const span = range.total || (monthEnd - monthStart);
+  const pace = running && num(h.booked) > 0 && elapsed > 0.15 * span
+    ? Math.round((num(h.booked) / elapsed) * span)
     : null;
 
   const rd = ready.rows[0] || {};
