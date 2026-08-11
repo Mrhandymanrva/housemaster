@@ -2,8 +2,12 @@ import { useEffect, useState, useCallback } from 'react';
 import { api } from '../lib/api.js';
 import DataTable from '../components/DataTable.jsx';
 import RecordDrawer from '../components/RecordDrawer.jsx';
+import ImportDrawer from '../components/ImportDrawer.jsx';
 import Icon from '../components/Icons.jsx';
 import { plainName, singular } from '../lib/plain.js';
+
+/** Kept in step with NO_IMPORT in server/routes/records.js. */
+const NO_IMPORT = new Set(['radon_custody_events', 'radon_deployments', 'inventory_transactions']);
 
 export default function Records({ entity }) {
   const [rows, setRows] = useState([]);
@@ -13,6 +17,7 @@ export default function Records({ entity }) {
   const [sort, setSort] = useState(null);
   const [wide, setWide] = useState(false);
   const [open, setOpen] = useState(null);
+  const [importing, setImporting] = useState(false);
   const [err, setErr] = useState(null);
 
   const load = useCallback(async () => {
@@ -54,7 +59,16 @@ export default function Records({ entity }) {
         <span style={{ fontSize: 14, color: 'var(--text-2)' }}>
           {loading ? '\u2026' : `${total} ${total === 1 ? 'record' : 'records'}`}
         </span>
-        <button className="btn primary" style={{ marginLeft: 'auto' }} onClick={() => setOpen({})}>
+        {/* Ledgers are written by the app as things happen; the server refuses
+            to import them, so the button is not offered for them either. */}
+        {!NO_IMPORT.has(entity.key) && (
+          <button className="btn" style={{ marginLeft: 'auto' }} onClick={() => setImporting(true)}>
+            <Icon name="table" size={17} /> Import from a spreadsheet
+          </button>
+        )}
+        <button className="btn primary"
+                style={NO_IMPORT.has(entity.key) ? { marginLeft: 'auto' } : undefined}
+                onClick={() => setOpen({})}>
           <Icon name="plus" size={17} /> Add a {singular(entity)}
         </button>
       </div>
@@ -80,6 +94,10 @@ export default function Records({ entity }) {
       {open && (
         <RecordDrawer entity={entity} record={open.id ? open : null}
                       onClose={() => setOpen(null)} onSave={save} />
+      )}
+
+      {importing && (
+        <ImportDrawer entity={entity} onDone={load} onClose={() => setImporting(false)} />
       )}
     </div>
   );

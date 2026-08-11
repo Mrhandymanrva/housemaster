@@ -1,8 +1,11 @@
 import { Router } from 'express';
-import { q } from '../lib/db.js';
+import { q, tx } from '../lib/db.js';
 import { getCatalog, getEntity } from '../catalog/sync.js';
 import { wrap, bad, notFound } from '../lib/http.js';
 import { requireAuth, requireRole } from '../lib/auth.js';
+import { parseTable } from '../lib/parseTable.js';
+import { planImport, guessMapping, importable, matchKey, AMBIGUOUS } from '../lib/importRows.js';
+import { applyPlan } from '../lib/importWrite.js';
 
 const r = Router();
 const ident = (s) => `"${String(s).replace(/"/g, '')}"`;
@@ -148,6 +151,107 @@ r.delete('/:entity/:id', requireAuth, requireRole('admin'), wrap(async (req, res
   await q(`DELETE FROM ${ident(e.table_name)} WHERE id = $1`, [req.params.id]);
   await audit(req, e.key, req.params.id, 'delete', null);
   res.status(204).end();
+}));
+
+// -------------------------------------------------------------- import
+/*
+ * Ledgers are left out on purpose. A custody event, a device placement and an
+ * inventory movement are records of something the app watched happen; they are
+ * the evidence, and evidence you can paste into is not evidence. Everything
+ * else — the fleet, the equipment, licences, supplies, vendors — is a list the
+ * office maintains, and typing those in one at a time is the job this replaces.
+ */
+const NO_IMPORT = new Set(['radon_custody_events', 'radon_deployments', 'inventory_transactions']);
+const MAX_ROWS = 2000;
+
+r.post('/:entity/import', requireAuth, requireRole('office'), wrap(async (req, res) => {
+  const e = await getEntity(req.params.entity);
+  if (!e) throw notFound(`No screen called "${req.params.entity}"`);
+  if (NO_IMPORT.has(e.key)) {
+    throw bad(`${e.label_plural} are written by the app as things happen, so they cannot be imported.`);
+  }
+
+  const { text, mapping, matchOn = null, commit = false } = req.body || {};
+  if (typeof text !== 'string' || !text.trim()) throw bad('Nothing was pasted.');
+
+  const parsed = parseTable(text);
+  if (parsed.header.length < 1) throw bad('That paste has no heading row.');
+  if (!parsed.rows.length) {
+    throw bad('That is a heading row with nothing under it. Include the rows as well.');
+  }
+  if (parsed.rows.length > MAX_ROWS) {
+    throw bad(`${parsed.rows.length} rows at once is more than this handles. Paste ${MAX_ROWS} or fewer.`);
+  }
+
+  // A mapping the client sends is honoured; the first look at a paste has none,
+  // so the headings are matched to fields and the client shows what it guessed.
+  const use = Array.isArray(mapping) && mapping.length === parsed.header.length
+    ? mapping.map((m) => m || null)
+    : guessMapping(parsed.header, e.fields);
+
+  // What each mapped reference column can point at, by name. Read once per
+  // column rather than per cell — forty rows naming the same van should not be
+  // forty queries.
+  const cat = await getCatalog();
+  const refIndex = {};
+  for (const col of [...new Set(use.filter(Boolean))]) {
+    const f = e.fields.find((x) => x.column_name === col);
+    if (f?.ui_control !== 'ref' || !f.ref_entity) continue;
+    const target = cat.find((x) => x.key === f.ref_entity);
+    if (!target) continue;
+    const { rows } = await q(
+      `SELECT id, ${ident(target.title_column)} AS label FROM ${ident(target.table_name)}`);
+    const index = new Map();
+    for (const row of rows) {
+      const key = matchKey(row.label);
+      if (!key) continue;
+      // Two vans both called "12" cannot be told apart, and picking either is
+      // worse than saying so.
+      index.set(key, index.has(key) ? AMBIGUOUS : row.id);
+    }
+    refIndex[col] = index;
+  }
+
+  // Which rows already exist, by whatever column the office is matching on.
+  const existing = new Map();
+  const matchField = matchOn && e.fields.find((f) => f.column_name === matchOn && importable(f));
+  if (matchField && use.includes(matchOn)) {
+    const { rows } = await q(
+      `SELECT id, ${ident(matchOn)} AS key FROM ${ident(e.table_name)}
+        WHERE ${ident(matchOn)} IS NOT NULL`);
+    for (const row of rows) existing.set(matchKey(row.key), row.id);
+  }
+
+  const plan = planImport({
+    fields: e.fields, header: parsed.header, rows: parsed.rows,
+    mapping: use, matchOn, refIndex, existing,
+  });
+
+  const body = {
+    entity: e.key, header: parsed.header, delimiter: parsed.delimiter,
+    ...plan, committed: null,
+  };
+
+  if (!commit) return res.json(body);
+
+  // ------------------------------------------------------------- writing
+  if (plan.summary.problems) {
+    throw bad(`${plan.summary.problems} row${plan.summary.problems > 1 ? 's still have' : ' still has'} `
+      + 'something wrong with it. Nothing was saved.');
+  }
+  if (plan.missingRequired.length && plan.summary.create) {
+    throw bad(`Every new ${e.label.toLowerCase()} needs ${plan.missingRequired.join(' and ')}. `
+      + 'Map a column to it, or match on an existing record instead.');
+  }
+
+  // One transaction for the lot. A paste that lands two thirds of the way in
+  // is the worst outcome available: the office cannot tell what took without
+  // reading all of it, so a failure anywhere takes the whole paste back out.
+  const done = await tx((c) => applyPlan(c, {
+    table: e.table_name, entityKey: e.key, plan, userId: req.user?.id || null,
+  }));
+
+  res.json({ ...body, committed: done });
 }));
 
 // ------------------------------------------- choices for ref controls
