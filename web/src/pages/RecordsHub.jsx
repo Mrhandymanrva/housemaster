@@ -1,4 +1,6 @@
+import { useState } from 'react';
 import Icon from '../components/Icons.jsx';
+import WorkbookDrawer from '../components/WorkbookDrawer.jsx';
 import { GROUPS, plainName, plainDesc } from '../lib/plain.js';
 
 /**
@@ -6,6 +8,7 @@ import { GROUPS, plainName, plainDesc } from '../lib/plain.js';
  * lives here as a card with a sentence explaining what it holds.
  */
 export default function RecordsHub({ entities, go }) {
+  const [workbook, setWorkbook] = useState(false);
   const byKey = Object.fromEntries(entities.map((e) => [e.key, e]));
   const placed = new Set(GROUPS.flatMap(([, keys]) => keys));
   const leftover = entities.filter((e) => !placed.has(e.key));
@@ -25,6 +28,22 @@ export default function RecordsHub({ entities, go }) {
 
   return (
     <div className="stack">
+      {/* Above the screens on purpose. Filling fifteen of them in by hand is
+          the thing this replaces, and somebody starting out should meet it
+          before they start typing into the first one. */}
+      <button className="workbook-card" onClick={() => setWorkbook(true)}>
+        <span className="ico"><Icon name="table" size={22} /></span>
+        <span style={{ minWidth: 0 }}>
+          <b>Everything in one workbook</b>
+          <span>
+            Download the lot as a spreadsheet — one sheet per screen, filled in with
+            what is already here. Edit it on a laptop, upload it back, see exactly what
+            it would do before anything is saved.
+          </span>
+        </span>
+        <Icon name="right" size={18} />
+      </button>
+
       {groups.filter(([, list]) => list.length).map(([group, list]) => (
         <div key={group} className="stack" style={{ gap: 12 }}>
           <div className="group-label">{group}</div>
@@ -33,6 +52,8 @@ export default function RecordsHub({ entities, go }) {
           </div>
         </div>
       ))}
+
+      {workbook && <WorkbookDrawer onClose={() => setWorkbook(false)} />}
     </div>
   );
 }

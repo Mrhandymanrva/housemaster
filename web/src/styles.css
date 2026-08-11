@@ -662,3 +662,28 @@ textarea.input { min-height: 92px; resize: vertical; }
   background: var(--red-bg); color: #8E251A; font-size: 13px;
   white-space: normal; border-bottom: 1px solid var(--line);
 }
+
+/* ------------------------------------------------------------- workbook */
+.workbook-card {
+  display: flex; align-items: flex-start; gap: 14px; width: 100%; text-align: left;
+  background: var(--brand-bg); border: 1px solid #BFE9CB; border-radius: 14px;
+  padding: 18px 20px; cursor: pointer; font: inherit; color: var(--text);
+}
+.workbook-card:hover { border-color: var(--brand); }
+.workbook-card .ico {
+  width: 42px; height: 42px; border-radius: 11px; flex: 0 0 42px;
+  background: var(--brand); color: #fff; display: grid; place-items: center;
+}
+.workbook-card b { display: block; font-size: 15.5px; margin-bottom: 3px; color: var(--brand-2); }
+.workbook-card span span { display: block; font-size: 13.5px; color: #235C36; line-height: 1.5; }
+.workbook-card > svg:last-child { margin-left: auto; color: var(--brand); flex: 0 0 auto; }
+
+/* One row per sheet, folded shut until it has something to say. */
+.sheet-head {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  padding: 13px 16px; border: 0; background: none; font: inherit; cursor: pointer;
+  color: inherit; text-align: left;
+}
+.sheet-head:hover { background: var(--surface-2); }
+.sheet-head b { font-size: 14.5px; min-width: 150px; }
+.sheet-head .chips { display: flex; gap: 6px; flex-wrap: wrap; }

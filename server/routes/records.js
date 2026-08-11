@@ -6,6 +6,11 @@ import { requireAuth, requireRole } from '../lib/auth.js';
 import { parseTable } from '../lib/parseTable.js';
 import { planImport, guessMapping, importable, matchKey, AMBIGUOUS } from '../lib/importRows.js';
 import { applyPlan } from '../lib/importWrite.js';
+import ExcelJS from 'exceljs';
+import { buildWorkbook, workbookEntities, NO_IMPORT } from '../lib/workbook.js';
+import { readSheets, matchSheets, orderEntities } from '../lib/workbookImport.js';
+import { sheetRows, planOne } from '../lib/workbookIo.js';
+import { OFFICE_ZONE } from '../lib/zone.js';
 
 const r = Router();
 const ident = (s) => `"${String(s).replace(/"/g, '')}"`;
@@ -19,149 +24,146 @@ r.get('/catalog', requireAuth, wrap(async (_req, res) => {
   res.json({ entities: await getCatalog() });
 }));
 
-// ---------------------------------------------------------------- list
-r.get('/:entity', requireAuth, wrap(async (req, res) => {
-  const e = await getEntity(req.params.entity);
-  if (!e) throw notFound(`No screen called "${req.params.entity}"`);
-  const cols = columns(e);
+// ------------------------------------------------------------ workbook
+/*
+ * Everything in one file, out and back.
+ *
+ * Screen-at-a-time importing meant eighteen separate pastes in an order the
+ * office had to work out for itself, because a van cannot name a driver who
+ * does not exist yet. This is the same import engine with one door: every
+ * screen is a sheet, it goes home on a laptop, and the ordering is sorted out
+ * at this end.
+ */
 
-  const limit = Math.min(Number(req.query.limit) || 50, 500);
-  const offset = Number(req.query.offset) || 0;
-  const params = [];
-  const where = [];
+r.get('/workbook', requireAuth, requireRole('office'), wrap(async (req, res) => {
+  const catalog = await getCatalog();
+  const entities = workbookEntities(catalog);
 
-  // free-text search across the entity's search columns
-  if (req.query.search && e.search_columns?.length) {
-    params.push(`%${req.query.search}%`);
-    const p = `$${params.length}`;
-    where.push(
-      '(' + e.search_columns.map((c) => `t.${ident(c)}::text ILIKE ${p}`).join(' OR ') + ')'
-    );
+  const data = {};
+  const refs = {};
+  for (const e of entities) {
+    data[e.key] = await sheetRows({ query: q }, e, catalog);
+    // Choices for the dropdowns: every screen that something points at.
+    refs[e.key] = data[e.key].map((row) => ({ id: row.id, label: row[e.title_column] }))
+      .filter((x) => x.label);
   }
 
-  // filters: ?f=column:op:value  (op = eq, ne, lt, gt, lte, gte, like, null, notnull)
-  const raw = [].concat(req.query.f || []);
-  for (const spec of raw) {
-    const [col, op, ...rest] = String(spec).split(':');
-    const val = rest.join(':');
-    if (!cols.has(col)) throw bad(`Unknown column "${col}"`);
-    const ops = { eq: '=', ne: '<>', lt: '<', gt: '>', lte: '<=', gte: '>=' };
-    if (op === 'null') { where.push(`t.${ident(col)} IS NULL`); continue; }
-    if (op === 'notnull') { where.push(`t.${ident(col)} IS NOT NULL`); continue; }
-    if (op === 'like') { params.push(`%${val}%`); where.push(`t.${ident(col)}::text ILIKE $${params.length}`); continue; }
-    if (!ops[op]) throw bad(`Unknown filter "${op}"`);
-    params.push(val);
-    where.push(`t.${ident(col)} ${ops[op]} $${params.length}`);
-  }
-
-  // sort
-  let sort = e.default_sort;
-  if (req.query.sort) {
-    const [col, dir] = String(req.query.sort).split(':');
-    if (!cols.has(col)) throw bad(`Cannot sort by "${col}"`);
-    sort = `${col} ${dir === 'desc' ? 'desc' : 'asc'}`;
-  }
-  const [sortCol, sortDir] = sort.split(/\s+/);
-
-  // resolve reference columns to a readable label in one pass
-  const refSelects = [];
-  const joins = [];
-  const cat = await getCatalog();
-  e.fields.filter((f) => f.ui_control === 'ref' && f.ref_entity).forEach((f, i) => {
-    const target = cat.find((x) => x.key === f.ref_entity);
-    if (!target) return;
-    const alias = `r${i}`;
-    joins.push(`LEFT JOIN ${ident(target.table_name)} ${alias} ON ${alias}.id = t.${ident(f.column_name)}`);
-    refSelects.push(`${alias}.${ident(target.title_column)} AS ${ident(f.column_name + '__label')}`);
+  const buffer = await buildWorkbook({
+    catalog, data, refs,
+    generatedOn: new Date().toLocaleDateString('en-US',
+      { timeZone: OFFICE_ZONE, month: 'long', day: 'numeric', year: 'numeric' }),
   });
 
-  const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
-  const sql = `
-    SELECT t.*${refSelects.length ? ',\n           ' + refSelects.join(',\n           ') : ''}
-      FROM ${ident(e.table_name)} t
-      ${joins.join('\n      ')}
-      ${whereSql}
-     ORDER BY t.${ident(sortCol)} ${sortDir} NULLS LAST
-     LIMIT ${limit} OFFSET ${offset}`;
-
-  const [rows, count] = await Promise.all([
-    q(sql, params),
-    q(`SELECT count(*)::int AS n FROM ${ident(e.table_name)} t ${whereSql}`, params),
-  ]);
-
-  res.json({ entity: e.key, total: count.rows[0].n, limit, offset, rows: rows.rows });
+  const stamp = new Date().toISOString().slice(0, 10);
+  res.type('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="housemaster-records-${stamp}.xlsx"`);
+  res.send(Buffer.from(buffer));
 }));
 
-// -------------------------------------------------------------- one row
-r.get('/:entity/:id', requireAuth, wrap(async (req, res) => {
-  const e = await getEntity(req.params.entity);
-  if (!e) throw notFound();
-  const { rows } = await q(`SELECT * FROM ${ident(e.table_name)} WHERE id = $1`, [req.params.id]);
-  if (!rows[0]) throw notFound();
-  const files = await q(
-    `SELECT id, kind, filename, mime_type, byte_size, created_at
-       FROM attachments WHERE entity = $1 AND entity_id = $2 ORDER BY created_at DESC`,
-    [e.key, req.params.id]
-  );
-  res.json({ record: rows[0], attachments: files.rows });
+/**
+ * The workbook coming back.
+ *
+ * Sent as base64 in JSON rather than as a file upload: the app already takes
+ * photos that way, and one more body shape is one more thing to keep in step.
+ */
+r.post('/workbook', requireAuth, requireRole('office'), wrap(async (req, res) => {
+  const { file, commit = false } = req.body || {};
+  if (typeof file !== 'string' || !file) throw bad('No file came through.');
+
+  const buffer = Buffer.from(file.replace(/^data:[^,]*,/, ''), 'base64');
+  if (!buffer.length) throw bad('That file is empty.');
+
+  const wb = new ExcelJS.Workbook();
+  try {
+    await wb.xlsx.load(buffer);
+  } catch {
+    throw bad('That is not a workbook this can read. Send the .xlsx it came down as, '
+      + 'not a PDF or a CSV.');
+  }
+
+  const catalog = await getCatalog();
+  const { matched, unknown, empty } = matchSheets(readSheets(wb), catalog);
+  if (!matched.length) {
+    throw bad('None of the sheets in that file line up with a screen in the app. '
+      + 'Download a fresh workbook and fill that one in.');
+  }
+
+  // Whoever is pointed at is loaded first, so a van can name a driver who is
+  // being added on the Team sheet of this same workbook.
+  const order = orderEntities(matched.map((m) => m.entity));
+  const sheets = order.map((e) => matched.find((m) => m.entity.key === e.key));
+
+  const plans = [];
+  for (const s of sheets) {
+    plans.push({ ...s, plan: await planOne({ query: q }, s, sheets, catalog) });
+  }
+
+  const body = {
+    unknown, empty,
+    sheets: plans.map(({ entity, sheet, plan }) => ({
+      entity: entity.key, label: entity.label_plural, sheet,
+      summary: plan.summary, missingRequired: plan.missingRequired,
+      rows: sampleRows(plan.rows),
+      truncated: plan.rows.length > SAMPLE,
+    })),
+    totals: plans.reduce((acc, { plan }) => ({
+      create: acc.create + plan.summary.create,
+      update: acc.update + plan.summary.update,
+      problems: acc.problems + plan.summary.problems,
+    }), { create: 0, update: 0, problems: 0 }),
+    committed: null,
+  };
+
+  if (!commit) return res.json(body);
+
+  if (body.totals.problems) {
+    throw bad(`${body.totals.problems} row${body.totals.problems > 1 ? 's have' : ' has'} `
+      + 'something wrong. Nothing was saved.');
+  }
+  const blocked = plans.find(({ plan }) => plan.missingRequired.length && plan.summary.create);
+  if (blocked) {
+    throw bad(`The ${blocked.sheet} sheet has no ${blocked.plan.missingRequired.join(' or ')} column, `
+      + 'and new rows need one. Download a fresh workbook and copy your rows into it.');
+  }
+
+  // One transaction for the whole file. Each sheet is planned again against
+  // the database as it stands at that moment, so a driver written a step ago
+  // is a real id by the time the van that names them is written.
+  const done = await tx(async (c) => {
+    const out = [];
+    for (const s of sheets) {
+      const plan = await planOne(c, s, sheets, catalog, { pending: false });
+      if (plan.summary.problems) {
+        const first = plan.rows.find((x) => x.action === 'problem');
+        throw bad(`${s.sheet}, line ${first.line}: ${first.errors[0].message} Nothing was saved.`);
+      }
+      const counts = await applyPlan(c, {
+        table: s.entity.table_name, entityKey: s.entity.key, plan, userId: req.user?.id || null,
+      });
+      out.push({ sheet: s.sheet, label: s.entity.label_plural, ...counts });
+    }
+    return out;
+  });
+
+  res.json({ ...body, committed: done });
 }));
 
-// -------------------------------------------------------------- create
-r.post('/:entity', requireAuth, requireRole('office'), wrap(async (req, res) => {
-  const e = await getEntity(req.params.entity);
-  if (!e) throw notFound();
-  const writable = e.fields.filter((f) => f.ui_control !== 'readonly').map((f) => f.column_name);
-  const entries = Object.entries(req.body).filter(([k]) => writable.includes(k));
-  if (!entries.length) throw bad('Nothing to save');
+const SAMPLE = 200;
 
-  const cols = entries.map(([k]) => ident(k)).join(', ');
-  const ph = entries.map((_, i) => `$${i + 1}`).join(', ');
-  const { rows } = await q(
-    `INSERT INTO ${ident(e.table_name)} (${cols}) VALUES (${ph}) RETURNING *`,
-    entries.map(([, v]) => (v === '' ? null : v))
-  );
-  await audit(req, e.key, rows[0].id, 'create', req.body);
-  res.status(201).json({ record: rows[0] });
-}));
-
-// -------------------------------------------------------------- update
-r.patch('/:entity/:id', requireAuth, requireRole('office'), wrap(async (req, res) => {
-  const e = await getEntity(req.params.entity);
-  if (!e) throw notFound();
-  const writable = e.fields.filter((f) => f.ui_control !== 'readonly').map((f) => f.column_name);
-  const entries = Object.entries(req.body).filter(([k]) => writable.includes(k));
-  if (!entries.length) throw bad('Nothing to save');
-
-  const set = entries.map(([k], i) => `${ident(k)} = $${i + 1}`).join(', ');
-  const vals = entries.map(([, v]) => (v === '' ? null : v));
-  vals.push(req.params.id);
-  const { rows } = await q(
-    `UPDATE ${ident(e.table_name)} SET ${set} WHERE id = $${vals.length} RETURNING *`,
-    vals
-  );
-  if (!rows[0]) throw notFound();
-  await audit(req, e.key, req.params.id, 'update', req.body);
-  res.json({ record: rows[0] });
-}));
-
-// -------------------------------------------------------------- delete
-r.delete('/:entity/:id', requireAuth, requireRole('admin'), wrap(async (req, res) => {
-  const e = await getEntity(req.params.entity);
-  if (!e) throw notFound();
-  await q(`DELETE FROM ${ident(e.table_name)} WHERE id = $1`, [req.params.id]);
-  await audit(req, e.key, req.params.id, 'delete', null);
-  res.status(204).end();
-}));
+/** Problems first — they are what the office came to the preview to see. */
+function sampleRows(rows) {
+  return [...rows]
+    .sort((a, b) => (a.action === 'problem' ? 0 : 1) - (b.action === 'problem' ? 0 : 1) || a.line - b.line)
+    .slice(0, SAMPLE)
+    .map(({ line, action, display, errors }) => ({ line, action, display, errors }));
+}
 
 // -------------------------------------------------------------- import
 /*
- * Ledgers are left out on purpose. A custody event, a device placement and an
- * inventory movement are records of something the app watched happen; they are
- * the evidence, and evidence you can paste into is not evidence. Everything
- * else — the fleet, the equipment, licences, supplies, vendors — is a list the
- * office maintains, and typing those in one at a time is the job this replaces.
+ * The quick way in, for a handful of rows on one screen. NO_IMPORT is the same
+ * set the workbook leaves out — ledgers, which are records of things the app
+ * watched happen and are not editable by either door.
  */
-const NO_IMPORT = new Set(['radon_custody_events', 'radon_deployments', 'inventory_transactions']);
 const MAX_ROWS = 2000;
 
 r.post('/:entity/import', requireAuth, requireRole('office'), wrap(async (req, res) => {
