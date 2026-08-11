@@ -47,6 +47,14 @@ const state = {
   scope: localStorage.getItem('hm_field_scope') || null,
   route: { name: 'home' },
   draft: {},
+  // Signing for kit. Deliberately not cached: this is a list of what the
+  // office has right now, and a stale one would have somebody sign for
+  // equipment that moved last week.
+  claim: null,
+  picked: new Set(),
+  conditions: {},
+  van: '',
+  claimSearch: '',
   busy: false,
   err: null,
   flash: null,
@@ -316,6 +324,21 @@ async function loadKit() {
   render();
 }
 
+async function loadClaim() {
+  try {
+    state.claim = await api('/ops/field/kit-claim');
+    // What is already signed out to them is ticked to start with, so a tech
+    // whose kit has not changed confirms it with one tap.
+    state.picked = new Set(state.claim.items.filter((i) => i.mine).map((i) => i.id));
+    state.van = state.claim.vehicle_id || '';
+    state.err = null;
+  } catch (e) {
+    state.claim = null;
+    state.err = e.message;
+  }
+  render();
+}
+
 /** Anything a tech should look twice at before driving off. */
 const kitFlagged = (list = []) =>
   list.filter((x) => x.status === 'Needs Repair' || x.status === 'In Calibration'
@@ -382,13 +405,30 @@ function kitScreen() {
     return wrap;
   }
   if (!kit.equipment?.length) {
-    body.append(el(`<div class="empty">
+    // The first thing a new tech sees. It used to send them to the office and
+    // stop there; the office cannot know what is on their van, so the answer
+    // is to ask them.
+    const none = el(`<div class="empty">
       <h3>Nothing signed out to you</h3>
-      <p>The office assigns equipment to a person on the Records screen.</p>
-    </div>`));
+      <p>Say what you are actually carrying and it will be.</p>
+    </div>`);
+    const go = el('<button class="btn primary">Claim your kit</button>');
+    go.onclick = () => {
+      state.route = { name: 'claim' }; state.err = null; render(); loadClaim();
+    };
+    none.append(go);
+    body.append(none);
     wrap.append(body);
     return wrap;
   }
+
+  const claim = el(`<button class="btn" style="margin-bottom:14px">
+    Something changed — claim or hand back kit</button>`);
+  claim.onclick = () => {
+    state.route = { name: 'claim' }; state.err = null; state.flash = null;
+    render(); loadClaim();
+  };
+  body.append(claim);
 
   const open = state.route.itemId;
   for (const item of kit.equipment) {
@@ -491,6 +531,247 @@ function kitScreen() {
     body.append(card);
   }
 
+  wrap.append(body);
+  return wrap;
+}
+
+/**
+ * Claim your kit.
+ *
+ * One question — what have you actually got with you — answered by ticking.
+ * The office builds the equipment list from purchase records and calibration
+ * certificates, because that is where the serial numbers are; what it cannot
+ * know is which of those forty things is on which van this morning.
+ *
+ * Everything is on the list, not only what is spare, because kit moves between
+ * people without paperwork and "I have Bobby's ladder" has to be sayable. What
+ * is already signed out to you starts ticked, so a tech whose kit has not
+ * changed since March confirms it with one tap and gets on with their day.
+ */
+function claimScreen() {
+  const wrap = el('<div></div>');
+  wrap.append(el(`
+    <div class="top">
+      <button class="back" id="b">‹ Back</button>
+      <h1>Your kit</h1>
+    </div>`));
+  wrap.querySelector('#b').onclick = () => {
+    state.route = { name: 'kit' }; state.err = null; render(); loadKit();
+  };
+
+  const body = el('<div class="wrap"></div>');
+  if (state.err) body.append(el(`<div class="banner">${esc(state.err)}</div>`));
+
+  if (!state.online) {
+    body.append(el(`<div class="note">This one needs a signal — the equipment list
+      comes from the office and what you sign for has to reach it.</div>`));
+  }
+
+  const d = state.claim;
+  if (!d) {
+    body.append(el(state.err
+      ? '<div class="empty"><p>Pull down to try again once you have signal.</p></div>'
+      : '<div class="empty"><div class="spinner" style="margin:0 auto 12px"></div>Loading…</div>'));
+    wrap.append(body);
+    return wrap;
+  }
+  if (!d.items.length) {
+    body.append(el(`<div class="empty">
+      <h3>No equipment on file yet</h3>
+      <p>The office adds it under Records, then it shows up here to sign for.</p>
+    </div>`));
+    wrap.append(body);
+    return wrap;
+  }
+
+  body.append(el(`<p class="lede">Tick everything that is with you right now.
+    Leave the rest — kit that is not yours and you have not ticked is not touched.</p>`));
+  if (d.confirmed_at) {
+    body.append(el(`<p class="muted" style="margin:-6px 0 14px">
+      You last checked on ${esc(new Date(d.confirmed_at).toLocaleDateString([],
+        { month: 'long', day: 'numeric' }))}.</p>`));
+  }
+
+  // ------------------------------------------------------------ which van
+  if (d.vehicles.length) {
+    const van = el(`
+      <div class="field">
+        <label for="van">Which van are you in</label>
+        <select id="van">
+          <option value="">Not on a van</option>
+          ${d.vehicles.map((v) => `<option value="${esc(v.id)}"${
+            state.van === v.id ? ' selected' : ''}>${esc(v.unit_number)}${
+            v.make ? ` — ${esc([v.make, v.model].filter(Boolean).join(' '))}` : ''}</option>`).join('')}
+        </select>
+        <div class="help">Everything you tick goes down as being on this van.</div>
+      </div>`);
+    van.querySelector('select').onchange = (e) => { state.van = e.target.value; };
+    body.append(van);
+  }
+
+  // ------------------------------------------------------------- the list
+  const term = (state.claimSearch || '').trim().toLowerCase();
+  const find = el(`
+    <div class="field">
+      <input type="search" placeholder="Find a monitor, a ladder, a serial number…"
+             value="${esc(state.claimSearch || '')}" />
+    </div>`);
+  const input = find.querySelector('input');
+  input.oninput = (e) => {
+    state.claimSearch = e.target.value;
+    // Re-rendering the whole screen would take the keyboard's focus with it.
+    for (const row of wrap.querySelectorAll('.pick')) {
+      row.hidden = !matches(row.dataset, e.target.value);
+    }
+    for (const group of wrap.querySelectorAll('.pick-group')) {
+      const showing = [...group.querySelectorAll('.pick')].filter((r) => !r.hidden);
+      group.hidden = !showing.length;
+      // The count has to be the count of what is under it. "With someone else
+      // 5" above a single row reads as a bug in the filter.
+      const tag = group.querySelector('.tally');
+      tag.textContent = e.target.value.trim() ? showing.length : tag.dataset.all;
+    }
+  };
+  if (d.items.length > 8) body.append(find);
+
+  const matches = (data, q) => {
+    const s = (q || '').trim().toLowerCase();
+    return !s || (data.hay || '').includes(s);
+  };
+
+  const groups = [
+    ['With you', d.items.filter((i) => i.mine)],
+    ['Not signed out to anyone', d.items.filter((i) => !i.mine && !i.holder_name)],
+    ['With someone else', d.items.filter((i) => !i.mine && i.holder_name)],
+  ];
+
+  for (const [title, list] of groups) {
+    if (!list.length) continue;
+    const group = el(`<div class="pick-group"></div>`);
+    group.append(el(`<div class="section-label">${esc(title)}
+      <span class="tally" data-all="${list.length}">${list.length}</span></div>`));
+
+    for (const item of list) {
+      const on = state.picked.has(item.id);
+      const sub = [item.asset_category, item.make && [item.make, item.model].filter(Boolean).join(' ')]
+        .filter(Boolean).join(' · ');
+      const hay = [item.name, item.asset_category, item.serial_number, item.asset_tag,
+        item.make, item.model, item.holder_name].filter(Boolean).join(' ').toLowerCase();
+
+      const row = el(`
+        <div class="pick ${on ? 'on' : ''}" data-hay="${esc(hay)}">
+          <button class="pick-hit">
+            <span class="tick" aria-hidden="true">${on ? '✓' : ''}</span>
+            <span class="pick-what">
+              <span class="name">${esc(item.name)}</span>
+              ${sub ? `<span class="sub">${esc(sub)}</span>` : ''}
+              ${item.serial_number ? `<span class="sub mono">${esc(item.serial_number)}</span>` : ''}
+              ${item.holder_name ? `<span class="chip warn">with ${esc(item.holder_name)}</span>` : ''}
+              ${item.status && item.status !== 'In Service'
+                ? `<span class="chip bad">${esc(item.status)}</span>` : ''}
+            </span>
+          </button>
+        </div>`);
+      row.hidden = !matches({ hay }, term);
+
+      row.querySelector('.pick-hit').onclick = () => {
+        if (state.picked.has(item.id)) state.picked.delete(item.id);
+        else state.picked.add(item.id);
+        // Redraw this row and the running total only; a full render would drop
+        // the search box and scroll position on every tap.
+        row.classList.toggle('on');
+        row.querySelector('.tick').textContent = state.picked.has(item.id) ? '✓' : '';
+        drawCondition();
+        count();
+      };
+
+      // Condition is asked only for what you are holding, and only once it is
+      // ticked — forty selects for kit that is not yours is noise.
+      const conditionSlot = el('<div class="pick-extra"></div>');
+      row.append(conditionSlot);
+      const drawCondition = () => {
+        conditionSlot.textContent = '';
+        if (!state.picked.has(item.id) || !d.conditions.length) return;
+        // The do-nothing option has to say it is doing nothing. Labelling it
+        // with the current condition put "Fair" in the list twice, one of
+        // which quietly meant "no change".
+        const box = el(`
+          <label class="cond">What sort of shape is it in
+            <select>
+              <option value="">${item.condition
+                ? `Leave it as ${esc(item.condition)}`
+                : 'Say if you like'}</option>
+              ${d.conditions.map((c) => `<option value="${esc(c.value)}">${esc(c.label)}</option>`).join('')}
+            </select>
+          </label>`);
+        box.querySelector('select').value = state.conditions?.[item.id] || '';
+        box.querySelector('select').onchange = (e) => {
+          state.conditions = { ...(state.conditions || {}), [item.id]: e.target.value };
+        };
+        conditionSlot.append(box);
+      };
+      drawCondition();
+
+      group.append(row);
+    }
+    body.append(group);
+  }
+
+  // --------------------------------------------------------------- saving
+  const foot = el(`
+    <div class="foot">
+      <button class="btn primary" id="save"></button>
+      <div class="muted" id="tally" style="text-align:center;margin-top:8px"></div>
+    </div>`);
+  const saveBtn = foot.querySelector('#save');
+  const tally = foot.querySelector('#tally');
+
+  const count = () => {
+    const n = state.picked.size;
+    saveBtn.textContent = state.busy === 'claim' ? 'Signing…'
+      : n ? `Sign for ${n} ${n === 1 ? 'item' : 'items'}` : 'I have none of it';
+    const handedBack = d.items.filter((i) => i.mine && !state.picked.has(i.id)).length;
+    const takingOver = d.items.filter((i) => !i.mine && state.picked.has(i.id)).length;
+    tally.textContent = [
+      takingOver && `${takingOver} moving to you`,
+      handedBack && `${handedBack} handed back`,
+    ].filter(Boolean).join(' · ');
+  };
+  count();
+
+  saveBtn.onclick = async () => {
+    state.busy = 'claim'; state.err = null; count();
+    saveBtn.disabled = true;
+    try {
+      const out = await api('/ops/field/kit-claim', {
+        method: 'POST',
+        body: {
+          vehicle_id: state.van || null,
+          items: [...state.picked].map((id) => ({ id, condition: state.conditions?.[id] || null })),
+        },
+      });
+      const bits = [
+        out.claimed && `${out.claimed} signed out to you`,
+        out.released && `${out.released} handed back`,
+      ].filter(Boolean);
+      state.flash = bits.length
+        ? `${bits.join(', ')}. You are carrying ${out.holding}.`
+        : `Nothing changed — you are carrying ${out.holding}.`;
+      state.route = { name: 'kit' };
+      state.conditions = {};
+      state.busy = false;
+      render();
+      loadKit();
+      return;
+    } catch (e) {
+      state.err = e.message;
+    }
+    state.busy = false;
+    saveBtn.disabled = false;
+    render();
+  };
+
+  body.append(foot);
   wrap.append(body);
   return wrap;
 }
@@ -697,6 +978,26 @@ function homeScreen() {
 
   // ------------------------------------------------------------ equipment
   const kit = state.kit?.equipment || [];
+
+  // Nothing signed out is not nothing to show. It is the state every new tech
+  // starts in, and the one where the app most needs to ask them a question.
+  if (!kit.length && state.kit) {
+    body.append(el('<div class="section-label">Equipment</div>'));
+    const tile = el(`
+      <button class="wide-tile">
+        <div class="what">
+          <div class="name">Nothing signed out to you</div>
+          <div class="chips"><span class="chip warn">Say what you are carrying</span></div>
+        </div>
+        <div class="chev">›</div>
+      </button>`);
+    tile.onclick = () => {
+      state.route = { name: 'claim' }; state.err = null; state.flash = null;
+      render(); loadClaim();
+    };
+    body.append(tile);
+  }
+
   if (kit.length) {
     const repair = kit.filter((x) => x.status === 'Needs Repair').length;
     const away = kit.filter((x) => x.status === 'In Calibration').length;
@@ -1136,6 +1437,7 @@ function render() {
   if (!state.token) { root.append(loginScreen()); return; }
   if (state.route.name === 'jobs') { root.append(jobsScreen()); return; }
   if (state.route.name === 'kit') { root.append(kitScreen()); return; }
+  if (state.route.name === 'claim') { root.append(claimScreen()); return; }
   if (state.route.name === 'form') {
     const mod = state.modules.find((m) => m.key === state.route.key);
     if (mod) { root.append(formScreen(mod)); return; }

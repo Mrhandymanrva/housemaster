@@ -351,3 +351,40 @@ input:focus, select:focus, textarea:focus {
   font-weight: 600; color: var(--brand-2); min-height: 36px;
 }
 .install-nudge .link.dim { color: var(--text-3); font-weight: 500; }
+
+/* ------------------------------------------------------------ claim kit */
+.lede { font-size: 14.5px; color: var(--text-2); margin: 4px 0 14px; }
+.section-label .tally {
+  display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 9px;
+  background: var(--surface-3); color: var(--text-3); font-size: 12px; font-weight: 600;
+}
+
+/* A whole row is the target, not a checkbox. This is tapped forty times in a
+   row with one thumb, sometimes wearing a glove. */
+.pick {
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--r-sm); margin-bottom: 8px; overflow: hidden;
+}
+.pick.on { border-color: var(--brand); background: var(--brand-bg); }
+.pick-hit {
+  width: 100%; min-height: 60px; border: 0; background: none; font: inherit;
+  color: inherit; text-align: left; padding: 12px 14px;
+  display: flex; align-items: center; gap: 12px;
+}
+.pick .tick {
+  flex: 0 0 26px; width: 26px; height: 26px; border-radius: 7px;
+  border: 2px solid var(--line-2); background: var(--surface);
+  display: grid; place-items: center; font-size: 15px; font-weight: 700; line-height: 1;
+}
+.pick.on .tick { background: var(--brand); border-color: var(--brand); color: #fff; }
+.pick-what { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; min-width: 0; }
+.pick-what .name { font-weight: 600; font-size: 15.5px; width: 100%; }
+.pick-what .sub { font-size: 13px; color: var(--text-2); }
+.pick-what .sub.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
+
+.pick-extra:empty { display: none; }
+.cond {
+  display: block; padding: 0 14px 12px 52px;
+  font-size: 13px; color: var(--text-2);
+}
+.cond select { margin-top: 6px; }

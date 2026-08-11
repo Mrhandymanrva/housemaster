@@ -6,6 +6,7 @@ import { getEntity, bustCatalog } from '../catalog/sync.js';
 import { createRadonSet, radonSetFromSubmission } from '../radonIntake.js';
 import { absorbPayloadImages, relinkAttachments } from '../attachments.js';
 import { OFFICE_ZONE, officeRanges } from '../lib/zone.js';
+import { planClaim, changesAnything } from '../lib/kitClaim.js';
 
 /**
  * Some records are more than a row.
@@ -526,6 +527,160 @@ r.patch('/field/equipment/:id', requireAuth, wrap(async (req, res) => {
   await q('SELECT refresh_compliance()');
 
   res.json({ equipment: rows[0] });
+}));
+
+/**
+ * Claim your kit — everything claimable, and what this person is holding now.
+ *
+ * The office builds the equipment list from purchase records and calibration
+ * certificates, because that is where the serial numbers are. What it cannot
+ * know is which of those forty things is on which van this morning, and any
+ * answer it guesses is wrong within a week. So the list is created at a desk
+ * and assigned from a driveway.
+ *
+ * Everything not retired comes back, not only what is unassigned: kit moves
+ * between people without paperwork, and a screen that could not show "I have
+ * Bobby's ladder" would be a screen that quietly stays wrong.
+ */
+r.get('/field/kit-claim', requireAuth, wrap(async (req, res) => {
+  const me = req.user.employee_id || null;
+  if (!me) {
+    throw bad('Your login is not linked to a person yet, so there is nobody to sign kit out to. '
+      + 'The office does that under ISN link, or on your employee record.');
+  }
+
+  const [items, vehicles, conditions, who] = await Promise.all([
+    q(`SELECT e.id, e.name, e.asset_category, e.serial_number, e.asset_tag,
+              e.make, e.model, e.status, e.condition,
+              e.assigned_employee_id, e.assigned_vehicle_id,
+              p.full_name AS holder_name,
+              v.unit_number AS on_vehicle
+         FROM equipment e
+         LEFT JOIN employees p ON p.id = e.assigned_employee_id
+         LEFT JOIN vehicles v ON v.id = e.assigned_vehicle_id
+        WHERE e.status <> 'Retired'
+        ORDER BY e.asset_category NULLS LAST, e.name`),
+    q(`SELECT id, unit_number, make, model FROM vehicles
+        WHERE status IS DISTINCT FROM 'Out of Service' ORDER BY unit_number`),
+    q(`SELECT value, label FROM lookup_values
+        WHERE list_key = 'asset_condition' AND active ORDER BY sort, label`),
+    q(`SELECT kit_confirmed_at FROM employees WHERE id = $1`, [me]),
+  ]);
+
+  // Whichever van most of their kit is already on, so the picker starts on the
+  // right answer instead of making them find it every time.
+  const vans = {};
+  for (const i of items.rows) {
+    if (i.assigned_employee_id === me && i.assigned_vehicle_id) {
+      vans[i.assigned_vehicle_id] = (vans[i.assigned_vehicle_id] || 0) + 1;
+    }
+  }
+  const usual = Object.entries(vans).sort((a, b) => b[1] - a[1])[0]?.[0] || null;
+
+  res.json({
+    me,
+    vehicle_id: usual,
+    vehicles: vehicles.rows,
+    conditions: conditions.rows,
+    confirmed_at: who.rows[0]?.kit_confirmed_at || null,
+    items: items.rows.map((i) => ({
+      id: i.id, name: i.name, asset_category: i.asset_category,
+      serial_number: i.serial_number, asset_tag: i.asset_tag,
+      make: i.make, model: i.model, status: i.status, condition: i.condition,
+      on_vehicle: i.on_vehicle,
+      mine: i.assigned_employee_id === me,
+      holder_name: i.assigned_employee_id === me ? null : i.holder_name,
+    })),
+  });
+}));
+
+/**
+ * Sign for it.
+ *
+ * Ticked and not yours becomes yours; ticked and already yours stays put;
+ * unticked and yours is handed back. Anything unticked that was never yours is
+ * left completely alone — a tech scrolling past somebody else's kit has not
+ * said anything about it, and treating silence as a hand-back would empty the
+ * shop the first time anyone used this.
+ */
+r.post('/field/kit-claim', requireAuth, wrap(async (req, res) => {
+  const me = req.user.employee_id || null;
+  if (!me) throw bad('Your login is not linked to a person yet.');
+
+  const { vehicle_id = null, items = [] } = req.body || {};
+  if (!Array.isArray(items)) throw bad('Expected a list of what you have.');
+
+  const current = await q(
+    `SELECT e.id, e.name, e.condition, e.assigned_employee_id, e.assigned_vehicle_id,
+            p.full_name AS holder_name
+       FROM equipment e
+       LEFT JOIN employees p ON p.id = e.assigned_employee_id
+      WHERE e.status <> 'Retired'`);
+
+  if (vehicle_id) {
+    const van = await q(`SELECT id FROM vehicles WHERE id = $1`, [vehicle_id]);
+    if (!van.rows[0]) throw bad('That van is not on file.');
+  }
+
+  const plan = planClaim({ me, items: current.rows, claimed: items, vehicleId: vehicle_id });
+
+  if (changesAnything(plan)) {
+    await tx(async (c) => {
+      const stamp = new Date().toLocaleDateString('en-US', { timeZone: OFFICE_ZONE });
+      const signer = req.user.name || 'Field';
+
+      for (const item of [...plan.take, ...plan.update]) {
+        await c.query(
+          `UPDATE equipment
+              SET assigned_employee_id = $2,
+                  assigned_vehicle_id = $3,
+                  condition = COALESCE($4, condition)
+            WHERE id = $1`,
+          [item.id, me, plan.vehicleId, item.condition || null]);
+      }
+
+      // Taking something off a colleague is worth a line in the item's own
+      // history, where the next person to wonder will actually look.
+      for (const item of plan.take.filter((x) => x.from)) {
+        await c.query(
+          `UPDATE equipment
+              SET notes = CASE WHEN notes IS NULL OR notes = '' THEN $2
+                               ELSE $2 || E'\\n\\n' || notes END
+            WHERE id = $1`,
+          [item.id, `${stamp} — ${signer}: took this over from ${item.fromName || 'someone else'}.`]);
+      }
+
+      for (const item of plan.release) {
+        await c.query(
+          `UPDATE equipment SET assigned_employee_id = NULL, assigned_vehicle_id = NULL
+            WHERE id = $1 AND assigned_employee_id = $2`, [item.id, me]);
+      }
+
+      for (const [action, list] of [['claimed', plan.take], ['moved', plan.update], ['released', plan.release]]) {
+        for (const item of list) {
+          await c.query(
+            `INSERT INTO audit_log (user_id, entity, entity_id, action, diff)
+             VALUES ($1,'equipment',$2,'field_kit',$3)`,
+            [req.user.id, item.id,
+             JSON.stringify({ what: action, vehicle_id: plan.vehicleId,
+               condition: item.condition || null, from: item.fromName || null })]);
+        }
+      }
+    });
+  }
+
+  // Stamped even when nothing changed: "I looked, it is all still right" is
+  // the answer this asks for as much as any correction, and it is the whole
+  // point of asking again in three months.
+  await q(`UPDATE employees SET kit_confirmed_at = now() WHERE id = $1`, [me]);
+
+  res.json({
+    holding: plan.holding,
+    claimed: plan.take.length,
+    released: plan.release.length,
+    moved: plan.update.length,
+    takenFrom: plan.take.filter((x) => x.fromName).map((x) => x.fromName),
+  });
 }));
 
 r.patch('/field/modules/:id', requireAuth, requireRole('admin'), wrap(async (req, res) => {
