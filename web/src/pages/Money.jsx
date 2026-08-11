@@ -95,7 +95,7 @@ export default function Money() {
       </div>
 
       <div className="grid split">
-        <Trend rows={d.trend} />
+        <Trend rows={d.trend} knownFrom={d.knownFrom} />
         <ServiceLines lines={d.byService} label={label} />
       </div>
 
@@ -156,7 +156,7 @@ function Kpi({ label, value, delta: dd, meta, tone }) {
  * Green and blue rather than the obvious green and amber: that pair separates
  * at ΔE 4 under red-green colour blindness, which is to say not at all.
  */
-function Trend({ rows }) {
+function Trend({ rows, knownFrom }) {
   const [hover, setHover] = useState(null);
   const W = 720;
   const H = 260;
@@ -164,16 +164,33 @@ function Trend({ rows }) {
   const top = niceTop(Math.max(...rows.map((r) => r.booked), 1));
   const x = (i) => pad.l + ((W - pad.l - pad.r) * i) / Math.max(1, rows.length - 1);
   const y = (v) => pad.t + (H - pad.t - pad.b) * (1 - v / top);
-  const line = (key) => rows.map((r, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(r[key]).toFixed(1)}`).join(' ');
-  const area = `${line('collected')} L${x(rows.length - 1).toFixed(1)},${y(0)} L${x(0).toFixed(1)},${y(0)} Z`;
+
+  // Months the app has never seen are not months the branch earned nothing in.
+  // The line starts where the records start; before that the chart shows a
+  // shaded gap and says why, because a flat zero back to last September is a
+  // confident claim about a year nobody has looked at.
+  const from = Math.max(0, rows.findIndex((r) => r.known !== false));
+  const seen = rows.slice(from);
+  const line = (key) => seen.map((r, i) =>
+    `${i ? 'L' : 'M'}${x(i + from).toFixed(1)},${y(r[key]).toFixed(1)}`).join(' ');
+  const area = seen.length
+    ? `${line('collected')} L${x(rows.length - 1).toFixed(1)},${y(0)} L${x(from).toFixed(1)},${y(0)} Z`
+    : '';
 
   return (
     <div className="card">
       <div className="card-head">
         <div>
           <h2>Revenue over the last 12 months</h2>
-          <div className="sub">What jobs were booked at, against what has been paid.
-            The gap between the lines is money still owed.</div>
+          <div className="sub">
+            What jobs were booked at, against what has been paid. The gap between the
+            lines is money still owed.
+            {knownFrom && rows[0] && rows[0].known === false && (
+              <> Orders only go back to {longMonth(knownFrom)} — ISN lists what has changed
+                 recently, so anything older than that was never pulled in. The shaded part
+                 is unknown, not zero.</>
+            )}
+          </div>
         </div>
       </div>
       <div className="legend">
@@ -190,13 +207,21 @@ function Trend({ rows }) {
             </g>
           ))}
 
+          {from > 0 && (
+            <>
+              <rect x={pad.l} y={pad.t} width={x(from) - pad.l} height={H - pad.t - pad.b}
+                    fill="var(--surface-3)" fillOpacity="0.7" />
+              <text x={(pad.l + x(from)) / 2} y={pad.t + (H - pad.t - pad.b) / 2}
+                    textAnchor="middle" style={{ fontSize: 11.5 }}>not synced yet</text>
+            </>
+          )}
           <path d={area} fill="var(--brand)" fillOpacity="0.12" />
           <path d={line('collected')} fill="none" stroke="var(--brand)" strokeWidth="2.5"
                 strokeLinejoin="round" strokeLinecap="round" />
           <path d={line('booked')} fill="none" stroke="var(--blue)" strokeWidth="2.5"
                 strokeLinejoin="round" strokeLinecap="round" />
 
-          {rows.length > 0 && (
+          {seen.length > 0 && (
             <>
               <circle cx={x(rows.length - 1)} cy={y(rows[rows.length - 1].booked)} r="4" fill="var(--blue)" />
               <circle cx={x(rows.length - 1)} cy={y(rows[rows.length - 1].collected)} r="4" fill="var(--brand)" />
@@ -219,11 +244,16 @@ function Trend({ rows }) {
         {hover != null && (
           <div className="chart-tip" style={{ left: `${(x(hover) / W) * 100}%` }}>
             <b>{longMonth(rows[hover].month)}</b>
-            <div><span style={{ background: 'var(--blue)' }} />Booked {money(rows[hover].booked)}</div>
-            <div><span style={{ background: 'var(--brand)' }} />Collected {money(rows[hover].collected)}</div>
-            <div className="tot">
-              {money(Math.max(0, rows[hover].booked - rows[hover].collected))} owed · {rows[hover].jobs} jobs
-            </div>
+            {rows[hover].known === false && <div className="tot">Never synced — no orders on file</div>}
+            {rows[hover].known !== false && (
+              <>
+                <div><span style={{ background: 'var(--blue)' }} />Booked {money(rows[hover].booked)}</div>
+                <div><span style={{ background: 'var(--brand)' }} />Collected {money(rows[hover].collected)}</div>
+                <div className="tot">
+                  {money(Math.max(0, rows[hover].booked - rows[hover].collected))} owed · {rows[hover].jobs} jobs
+                </div>
+              </>
+            )}
           </div>
         )}
       </div>

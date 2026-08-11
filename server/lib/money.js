@@ -96,7 +96,7 @@ export async function moneyReport(client, range, { kinds = [], receivablesLimit 
   const priorSoFar = range.priorEnd;
   const now = new Date();
 
-  const [head, prior, trend, services, people, receivables, ready, sync, ...overhead] = await Promise.all([
+  const [head, prior, trend, horizon, services, people, receivables, ready, sync, ...overhead] = await Promise.all([
     client.query(
       `SELECT COALESCE(SUM(total_fee), 0)                             AS booked,
               COALESCE(SUM(total_fee) FILTER (WHERE paid), 0)         AS collected,
@@ -133,6 +133,16 @@ export async function moneyReport(client, range, { kinds = [], receivablesLimit 
           AND o.scheduled_start IS NOT NULL
         GROUP BY m ORDER BY m`,
       [monthStart, OFFICE_ZONE]),
+
+    // How far back the app's own records actually reach. ISN's change filter
+    // only lists orders touched in the last few months, so anything older was
+    // never pulled — and a month with no rows in it has to read as "not known"
+    // rather than as a month the branch earned nothing in.
+    client.query(
+      `SELECT to_char(min(scheduled_start) AT TIME ZONE $1, 'YYYY-MM') AS first_month
+         FROM isn_orders
+        WHERE ${REAL_WORK}`,
+      [OFFICE_ZONE]),
 
     // What was sold, from the services on the order rather than from the fee,
     // which is one number for the whole job.
@@ -207,6 +217,7 @@ export async function moneyReport(client, range, { kinds = [], receivablesLimit 
     ? Math.round((num(h.booked) / elapsed) * span)
     : null;
 
+  const firstMonth = horizon.rows[0]?.first_month || null;
   const rd = ready.rows[0] || {};
   const conn = sync.rows[0] || {};
 
@@ -244,7 +255,11 @@ export async function moneyReport(client, range, { kinds = [], receivablesLimit 
     },
     trend: trend.rows.map((r) => ({
       month: r.month, booked: num(r.booked), collected: num(r.collected), jobs: num(r.jobs),
+      // A month before the first order on file is a month nobody has looked
+      // at, and the chart must not draw it as a zero.
+      known: firstMonth ? r.month >= firstMonth : false,
     })),
+    knownFrom: firstMonth,
     byService,
     scoreboard: people.rows.map((r) => ({
       name: r.name, employeeId: r.employee_id,
