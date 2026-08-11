@@ -76,21 +76,18 @@ const day = (d) => d.toISOString().slice(0, 10);
 
 /**
  * @param client  anything with .query — the pool, or a transaction
- * @param ranges  officeRanges(), so every boundary here matches the rest of
- *                the app rather than being worked out a second way
+ * @param range   periodRange(), which carries the window and the same-length
+ *                slice of the one before it, so every boundary here matches
+ *                the rest of the app rather than being worked out a second way
  */
-export async function moneyReport(client, ranges, { kinds = [], receivablesLimit = 25 } = {}) {
-  const { monthStart, monthEnd } = ranges;
+export async function moneyReport(client, range, { kinds = [], receivablesLimit = 25 } = {}) {
+  const monthStart = range.start;
+  const monthEnd = range.end;
+  const priorStart = range.priorStart;
+  const priorSoFar = range.priorEnd;
   const now = new Date();
 
-  // The same stretch of last month, so a month eleven days in is compared with
-  // eleven days and not with thirty.
-  const priorStart = new Date(monthStart);
-  priorStart.setUTCMonth(priorStart.getUTCMonth() - 1);
-  const priorSoFar = new Date(priorStart);
-  priorSoFar.setUTCDate(priorSoFar.getUTCDate() + Math.ceil((now - monthStart) / 86400000));
-
-  const [head, prior, trend, services, people, receivables, ...overhead] = await Promise.all([
+  const [head, prior, trend, services, people, receivables, ready, sync, ...overhead] = await Promise.all([
     client.query(
       `SELECT COALESCE(SUM(total_fee), 0)                             AS booked,
               COALESCE(SUM(total_fee) FILTER (WHERE paid), 0)         AS collected,
@@ -165,6 +162,22 @@ export async function moneyReport(client, ranges, { kinds = [], receivablesLimit
         LIMIT ${Number(receivablesLimit) || 25}`,
       [OFFICE_ZONE]),
 
+    // The strip along the bottom: can everybody work, and is the data fresh.
+    // An owner asking about money still wants to know the answer to that.
+    client.query(
+      `SELECT
+         (SELECT count(*) FROM inspector_readiness
+           WHERE licenses_expired > 0 OR dl_expired)                       AS blocked,
+         (SELECT count(*) FROM inspector_readiness)                        AS people,
+         (SELECT count(*) FROM compliance_horizon
+           WHERE completed_date IS NULL AND category = 'License'
+             AND due_date BETWEEN CURRENT_DATE AND CURRENT_DATE + 30)      AS licenses_soon,
+         (SELECT count(*) FROM vehicles
+           WHERE registration_expiration BETWEEN CURRENT_DATE AND CURRENT_DATE + 30) AS registrations_soon,
+         (SELECT count(*) FROM compliance_horizon
+           WHERE completed_date IS NULL AND due_date < CURRENT_DATE)       AS overdue`),
+    client.query(`SELECT last_sync_at, enabled FROM isn_connection LIMIT 1`),
+
     ...OVERHEAD.map((o) => client.query(o.sql, [day(monthStart), day(monthEnd)])),
   ]);
 
@@ -175,8 +188,31 @@ export async function moneyReport(client, ranges, { kinds = [], receivablesLimit
   const costs = OVERHEAD.map((o, i) => ({ ...o, sql: undefined, amount: num(overhead[i].rows[0].amount) }))
     .filter((c) => c.amount > 0);
 
+  // Where the period lands if the rest of it looks like what has gone so far.
+  // Only offered while it is still running, and only once enough of it has
+  // passed for the projection to mean anything.
+  const running = now < monthEnd;
+  const elapsed = range.elapsed ?? (now - monthStart);
+  const pace = running && elapsed > 0.15 * (range.total || (monthEnd - monthStart))
+    ? Math.round((num(h.booked) / elapsed) * (range.total || (monthEnd - monthStart)))
+    : null;
+
+  const rd = ready.rows[0] || {};
+  const conn = sync.rows[0] || {};
+
   return {
-    month: { start: monthStart, end: monthEnd },
+    period: range.period || 'month',
+    month: { start: monthStart, end: monthEnd, running, pace },
+    priorWindow: { start: priorStart, end: priorSoFar },
+    readiness: {
+      blocked: num(rd.blocked),
+      people: num(rd.people),
+      licensesSoon: num(rd.licenses_soon),
+      registrationsSoon: num(rd.registrations_soon),
+      overdue: num(rd.overdue),
+      isnSyncedAt: conn.last_sync_at || null,
+      isnEnabled: conn.enabled === true,
+    },
     booked: {
       month: num(h.booked),
       priorToDate: num(prior.rows[0].booked),

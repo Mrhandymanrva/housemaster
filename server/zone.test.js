@@ -5,7 +5,8 @@
  * own board read 8. Every range here is half-open and both ends are pinned.
  */
 import assert from 'node:assert/strict';
-import { officeRanges, officeParts, fromOfficeWallClock, OFFICE_ZONE } from './lib/zone.js';
+import { officeRanges, officeParts, fromOfficeWallClock, periodRange, PERIODS, OFFICE_ZONE }
+  from './lib/zone.js';
 
 let pass = 0;
 const t = (name, fn) => { fn(); pass++; console.log('  ok  ' + name); };
@@ -94,6 +95,44 @@ t('the date is the office’s, not the server’s', () => {
 t('a wall-clock reading round-trips', () => {
   const d = fromOfficeWallClock({ year: 2026, month: 8, day: 5, hour: 9 });
   assert.match(local(d), /Aug 5, 9:00 AM/);
+});
+
+console.log('\nnamed periods');
+
+t('each period starts where you would say it does', () => {
+  const at = new Date('2026-08-11T15:00:00Z');   // a Tuesday
+  assert.match(local(periodRange('week', at).start), /Sun, Aug 9/);
+  assert.match(local(periodRange('month', at).start), /Aug 1/);
+  assert.match(local(periodRange('quarter', at).start), /Jul 1/);
+  assert.match(local(periodRange('year', at).start), /Jan 1/);
+});
+
+t('compares against the same elapsed stretch, not a whole one', () => {
+  // Eleven days of August against thirty-one of July reads as a collapse, and
+  // somebody would act on it.
+  const r = periodRange('month', new Date('2026-08-11T15:00:00Z'));
+  assert.match(local(r.priorStart), /Jul 1/);
+  assert.match(local(r.priorEnd), /Jul 11/);
+  assert.equal(r.priorEnd - r.priorStart, r.elapsed);
+});
+
+t('a quarter looks back a quarter, not a month', () => {
+  assert.match(local(periodRange('quarter', new Date('2026-08-11T15:00:00Z')).priorStart), /Apr 1/);
+});
+
+t('falls back to the month when asked for something it does not know', () => {
+  const at = new Date('2026-08-11T15:00:00Z');
+  assert.equal(periodRange('fortnight', at).start.getTime(), periodRange('month', at).start.getTime());
+  assert.equal(periodRange(undefined, at).period, 'month');
+});
+
+t('every period is half-open, contains now, and knows its own length', () => {
+  const at = new Date('2026-08-11T15:00:00Z');
+  for (const p of PERIODS) {
+    const r = periodRange(p, at);
+    assert.ok(at >= r.start && at < r.end, p);
+    assert.equal(r.total, r.end - r.start, `${p} total`);
+  }
 });
 
 console.log(`\n${pass} checks passed\n`);

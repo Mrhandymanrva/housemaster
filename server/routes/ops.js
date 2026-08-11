@@ -5,7 +5,7 @@ import { requireAuth, requireRole } from '../lib/auth.js';
 import { getEntity, bustCatalog } from '../catalog/sync.js';
 import { createRadonSet, radonSetFromSubmission } from '../radonIntake.js';
 import { absorbPayloadImages, relinkAttachments } from '../attachments.js';
-import { OFFICE_ZONE, officeRanges } from '../lib/zone.js';
+import { OFFICE_ZONE, officeRanges, periodRange, PERIODS } from '../lib/zone.js';
 import { planClaim, changesAnything } from '../lib/kitClaim.js';
 import { moneyReport } from '../lib/money.js';
 
@@ -692,8 +692,8 @@ r.post('/field/kit-claim', requireAuth, wrap(async (req, res) => {
  * be handed their colleagues' numbers.
  */
 r.get('/money', requireAuth, requireRole('admin'), wrap(async (req, res) => {
-  const report = await moneyReport({ query: q }, officeRanges(), { kinds: await jobKinds() });
-  res.json(report);
+  const range = periodRange(req.query.period, new Date());
+  res.json(await moneyReport({ query: q }, range, { kinds: await jobKinds() }));
 }));
 
 r.patch('/field/modules/:id', requireAuth, requireRole('admin'), wrap(async (req, res) => {

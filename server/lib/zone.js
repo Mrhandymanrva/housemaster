@@ -75,6 +75,50 @@ export function officeRanges(now = new Date(), zone = OFFICE_ZONE) {
     monthEnd: month === 12
       ? fromOfficeWallClock({ year: year + 1, month: 1, day: 1 }, zone)
       : fromOfficeWallClock({ year, month: month + 1, day: 1 }, zone),
+    quarterStart: fromOfficeWallClock({ year, month: month - ((month - 1) % 3), day: 1 }, zone),
+    quarterEnd: month - ((month - 1) % 3) + 3 > 12
+      ? fromOfficeWallClock({ year: year + 1, month: 1, day: 1 }, zone)
+      : fromOfficeWallClock({ year, month: month - ((month - 1) % 3) + 3, day: 1 }, zone),
+    yearStart: fromOfficeWallClock({ year, month: 1, day: 1 }, zone),
+    yearEnd: fromOfficeWallClock({ year: year + 1, month: 1, day: 1 }, zone),
+  };
+}
+
+/**
+ * One named stretch of time, and the same stretch of the one before it.
+ *
+ * A period in progress compared against a whole previous period reads as a
+ * collapse — eleven days of a month against thirty of the last one — and
+ * somebody acts on it. So the comparison window is cut to the same elapsed
+ * length, and the screen says that is what it did.
+ */
+export const PERIODS = ['week', 'month', 'quarter', 'year'];
+
+export function periodRange(period = 'month', now = new Date(), zone = OFFICE_ZONE) {
+  const r = officeRanges(now, zone);
+  const named = {
+    week: [r.weekStart, r.weekEnd, 7],
+    month: [r.monthStart, r.monthEnd, 0],
+    quarter: [r.quarterStart, r.quarterEnd, 0],
+    year: [r.yearStart, r.yearEnd, 0],
+  }[PERIODS.includes(period) ? period : 'month'];
+
+  const [start, end] = named;
+  const elapsed = Math.max(0, now - start);
+
+  // Step back a whole period, then take only as much of it as has gone by.
+  const back = new Date(start);
+  if (period === 'week') back.setUTCDate(back.getUTCDate() - 7);
+  else if (period === 'quarter') back.setUTCMonth(back.getUTCMonth() - 3);
+  else if (period === 'year') back.setUTCFullYear(back.getUTCFullYear() - 1);
+  else back.setUTCMonth(back.getUTCMonth() - 1);
+
+  return {
+    period, start, end,
+    priorStart: back,
+    priorEnd: new Date(back.getTime() + elapsed),
+    elapsed,
+    total: end - start,
   };
 }
 

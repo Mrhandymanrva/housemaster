@@ -688,66 +688,6 @@ textarea.input { min-height: 92px; resize: vertical; }
 .sheet-head b { font-size: 14.5px; min-width: 150px; }
 .sheet-head .chips { display: flex; gap: 6px; flex-wrap: wrap; }
 
-/* ---------------------------------------------------------------- money */
-.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; }
-.kpi {
-  background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px;
-}
-.kpi.warn { border-color: #F0D9A8; background: var(--amber-bg); }
-.kpi-label { font-size: 13px; color: var(--text-2); font-weight: 550; }
-.kpi-value { font-size: 27px; font-weight: 650; margin: 6px 0 4px; font-variant-numeric: tabular-nums; }
-.kpi-foot { font-size: 12.5px; color: var(--text-3); display: flex; flex-direction: column; gap: 2px; }
-/* Direction is words as well as colour; on a money screen colour alone is
-   exactly what gets misread. */
-.kpi-foot .trend { font-weight: 600; }
-.kpi-foot .trend.up { color: var(--green); }
-.kpi-foot .trend.down { color: var(--red); }
-
-.two-up { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-@media (max-width: 1100px) { .two-up { grid-template-columns: 1fr; } }
-
-.legend { display: flex; gap: 14px; font-size: 13px; color: var(--text-2); }
-.legend span { display: flex; align-items: center; gap: 6px; }
-.legend i { width: 11px; height: 11px; border-radius: 3px; display: inline-block; }
-
-.chart-wrap { position: relative; }
-.chart { width: 100%; height: auto; display: block; overflow: visible; }
-.chart .grid { stroke: var(--line); stroke-width: 1; }
-.chart .axis { stroke: var(--line-2); stroke-width: 1; }
-.chart .tick { font-size: 11px; fill: var(--text-3); text-anchor: middle; }
-.chart .point-label { font-size: 11.5px; fill: var(--text-2); text-anchor: middle; font-weight: 600; }
-.chart g { cursor: default; }
-
-.chart-tip {
-  position: absolute; top: 4px; transform: translateX(-50%);
-  background: var(--text); color: #fff; border-radius: 9px; padding: 9px 12px;
-  font-size: 12.5px; line-height: 1.55; pointer-events: none; white-space: nowrap; z-index: 5;
-}
-.chart-tip b { display: block; margin-bottom: 3px; font-size: 13px; }
-.chart-tip div { display: flex; align-items: center; gap: 6px; }
-.chart-tip span { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
-.chart-tip .tot { margin-top: 4px; padding-top: 4px; border-top: 1px solid rgba(255,255,255,.2);
-                  color: #D6DEE9; display: block; }
-
-.svc { display: flex; align-items: center; gap: 10px; padding: 7px 0; font-size: 14px; }
-.svc-name { width: 120px; flex: 0 0 120px; }
-.svc-bar { flex: 1; height: 9px; background: var(--surface-3); border-radius: 5px; overflow: hidden; }
-.svc-bar i { display: block; height: 100%; background: var(--brand); border-radius: 5px; }
-.svc-n { width: 34px; text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
-.svc-money { width: 74px; text-align: right; color: var(--text-3); font-size: 13px;
-             font-variant-numeric: tabular-nums; }
-
-.cost-line {
-  display: flex; justify-content: space-between; align-items: center;
-  padding: 9px 0; border-bottom: 1px solid var(--line); font-size: 14.5px;
-}
-.cost-line:last-of-type { border-bottom: none; }
-.gap-note {
-  margin-top: 14px; background: var(--surface-2); border-radius: 10px; padding: 13px 15px;
-  font-size: 13.5px; color: var(--text-2); line-height: 1.55;
-}
-.gap-note b { color: var(--text); }
-
 /* ------------------------------------------------------- grouped nav */
 .nav-group { margin-bottom: 14px; }
 .nav-group-label {
@@ -796,3 +736,128 @@ textarea.input { min-height: 92px; resize: vertical; }
 .cmd-hint { margin-left: auto; font-size: 12.5px; color: var(--text-3);
             white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 45%; }
 .cmd-note { padding: 14px 12px; font-size: 13.5px; color: var(--text-3); }
+
+/* =====================================================================
+   Money — ported from the owner-dashboard mockup.
+
+   The mockup was drawn from these same tokens, so this is layout and
+   spacing only: no new colours, no new type scale. Where it showed
+   figures that come from QuickBooks, the panels here show what the app
+   itself can see and say so.
+   ===================================================================== */
+
+/* Period picker, top right of the screen. */
+.seg {
+  align-self: flex-end; display: flex; background: var(--surface);
+  border: 1px solid var(--line); border-radius: 10px; padding: 3px;
+}
+.seg button {
+  border: none; background: none; padding: 6px 13px; border-radius: 7px;
+  font: inherit; font-size: 13.5px; font-weight: 500; color: var(--text-2); cursor: pointer;
+}
+.seg button.on { background: var(--brand-bg); color: var(--brand); font-weight: 600; }
+.seg button:hover:not(.on) { color: var(--text); }
+/* A reload dims the numbers rather than emptying the screen, so switching
+   period does not throw the layout away and rebuild it. */
+.money.busy .kpis, .money.busy .grid, .money.busy .readiness { opacity: .55; transition: opacity .12s; }
+
+.kpis { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+.kpi {
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--r);
+  padding: 16px 18px; box-shadow: var(--shadow); position: relative;
+}
+.kpi.warn { border-color: #F0D9A8; background: var(--amber-bg); }
+.kpi .lbl { font-size: 13px; color: var(--text-2); font-weight: 500; }
+.kpi .val { font-size: 29px; font-weight: 700; letter-spacing: -.02em; margin-top: 5px; }
+.kpi .val.mono { font-size: 27px; }
+.kpi .meta {
+  font-size: 13px; color: var(--text-3); margin-top: 4px;
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+}
+.delta { font-weight: 600; font-size: 12.5px; padding: 2px 7px; border-radius: 6px; }
+.delta.up { background: var(--green-bg); color: var(--green); }
+.delta.down { background: var(--red-bg); color: var(--red); }
+
+/* The design system already owns .grid.c2 as two equal columns. This split is
+   the mockup's asymmetric one — the chart earns the wider half — so it gets a
+   name of its own rather than redefining a shared class. */
+.grid.split { grid-template-columns: 1.55fr 1fr; }
+
+.legend { display: flex; gap: 16px; align-items: center; font-size: 13px;
+          color: var(--text-2); padding: 0 18px 2px; }
+.legend span { display: inline-flex; align-items: center; gap: 7px; }
+.swatch { width: 11px; height: 11px; border-radius: 3px; display: inline-block; }
+
+.chart-wrap { position: relative; padding: 6px 10px 4px; }
+.chart-wrap svg .gl { stroke: var(--line); stroke-width: 1; }
+.chart-wrap svg text { font-family: var(--body); fill: var(--text-3); font-size: 11px; }
+.chart-tip {
+  position: absolute; top: 6px; transform: translateX(-50%);
+  background: var(--text); color: #fff; border-radius: 9px; padding: 9px 12px;
+  font-size: 12.5px; line-height: 1.55; pointer-events: none; white-space: nowrap; z-index: 5;
+}
+.chart-tip b { display: block; margin-bottom: 3px; font-size: 13px; }
+.chart-tip div { display: flex; align-items: center; gap: 6px; }
+.chart-tip span { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
+.chart-tip .tot { margin-top: 4px; padding-top: 4px; display: block;
+                  border-top: 1px solid rgba(255,255,255,.2); color: #D6DEE9; }
+
+.bars { display: flex; flex-direction: column; gap: 11px; padding: 6px 4px 2px; }
+.barrow { display: grid; grid-template-columns: 120px 1fr 74px; align-items: center;
+          gap: 12px; font-size: 13.5px; }
+.barrow .name { color: var(--text); font-weight: 500; }
+.barrow .track { height: 14px; background: var(--surface-3); border-radius: 7px; overflow: hidden; }
+.barrow .fill { display: block; height: 100%; border-radius: 7px; background: var(--brand); }
+.barrow .amt { text-align: right; color: var(--text-2); font-weight: 600; }
+
+.money table.data th { text-transform: uppercase; letter-spacing: .04em; font-size: 12px;
+                       padding: 8px 10px; cursor: default; position: static; }
+.money table.data td { padding: 10px; white-space: nowrap; }
+.money table.data tbody tr { cursor: default; }
+.money table.data tbody tr:hover td { background: none; }
+.money table.data td.r, .money table.data th.r { text-align: right; font-variant-numeric: tabular-nums; }
+.who-cell { display: flex; align-items: center; gap: 9px; }
+.mini-av {
+  width: 26px; height: 26px; border-radius: 50%; flex: 0 0 26px;
+  background: var(--brand-bg); color: var(--brand);
+  display: grid; place-items: center; font-size: 11px; font-weight: 600;
+}
+
+.rows { display: flex; flex-direction: column; }
+.rows .row { display: flex; align-items: center; gap: 12px; padding: 11px 6px;
+             border-bottom: 1px solid var(--surface-3); font-size: 13.5px; }
+.rows .row:last-child { border-bottom: none; }
+.rows .main-text { display: flex; flex-direction: column; min-width: 0; }
+.rows .main-text b { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rows .main-text span { color: var(--text-3); font-size: 12.5px; }
+.rows .amt { margin-left: auto; text-align: right; font-weight: 700; }
+.rows .age { font-size: 12px; color: var(--text-3); text-align: right; min-width: 46px; }
+
+.costs { display: flex; flex-wrap: wrap; gap: 10px; padding: 2px 4px; }
+.cost { flex: 1 1 120px; background: var(--surface-2); border: 1px solid var(--line);
+        border-radius: 10px; padding: 11px 13px; }
+.cost .cl { font-size: 12.5px; color: var(--text-2); }
+.cost .cv { font-size: 18px; font-weight: 700; margin-top: 3px; }
+.cost.total { background: var(--brand-bg); border-color: #BEE6C8; }
+.cost.total .cv { color: var(--brand-2); }
+
+.money .note {
+  background: var(--surface-2); border: 1px dashed var(--line-2); border-radius: 10px;
+  padding: 12px 14px; font-size: 13px; color: var(--text-2);
+  display: flex; gap: 10px; align-items: flex-start;
+}
+.money .note b { color: var(--text); }
+
+.readiness { display: flex; gap: 10px; flex-wrap: wrap; }
+.rchip {
+  background: var(--surface); border: 1px solid var(--line); border-radius: 999px;
+  padding: 7px 13px; font-size: 13px; color: var(--text-2);
+  display: inline-flex; align-items: center; gap: 8px; box-shadow: var(--shadow);
+}
+.rdot { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 9px; }
+
+@media (max-width: 1080px) {
+  .kpis { grid-template-columns: repeat(2, 1fr); }
+  .grid.split { grid-template-columns: 1fr; }
+}
+@media (max-width: 640px) { .kpis { grid-template-columns: 1fr; } }
