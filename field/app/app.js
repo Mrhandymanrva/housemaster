@@ -10,6 +10,7 @@
  * comes back, keyed by a uuid the phone makes, so a retry cannot double-post.
  */
 import { decide, validateDeployment, advance, merge } from './qa-guard.js';
+import { installCard, installNudge } from './install.js';
 
 const API = '/api';
 const LS = {
@@ -270,6 +271,11 @@ function loginScreen() {
       </div>
       <button class="btn primary" id="go">Sign in</button>
     </div>`);
+
+  // Above the fields, not below them: a tech who scanned the QR lands here and
+  // the browser tab they are looking at is not yet the app.
+  const card = installCard();
+  if (card) box.querySelector('.err').before(card);
 
   const err = box.querySelector('.err');
   if (state.err) err.append(el(`<div class="banner">${esc(state.err)}</div>`));
@@ -680,6 +686,11 @@ function homeScreen() {
   }
   if (state.err) body.append(el(`<div class="banner">${esc(state.err)}</div>`));
   if (state.flash) body.append(el(`<div class="ok">${esc(state.flash)}</div>`));
+
+  // Someone who signed in through Safari never sees the login screen again,
+  // and would go on using a browser tab forever without this.
+  const nudge = installNudge();
+  if (nudge) body.append(nudge);
 
   // ---------------------------------------------------------------- count
   body.append(countBlock());

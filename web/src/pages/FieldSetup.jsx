@@ -130,15 +130,33 @@ export default function FieldSetup() {
             <div>
               <h2>Getting it onto a phone</h2>
               <div className="sub">
-                Nothing to install from a store. Open this address on the phone and add it
-                to the home screen — it opens full-screen like any other app.
+                Nothing to install from a store. Point a phone camera at the code, or open
+                the address, and add it to the home screen — it opens full-screen like any
+                other app.
               </div>
             </div>
           </div>
           <div className="card-body" style={{ paddingTop: 4 }}>
-            <div className="field" style={{ marginBottom: 12 }}>
-              <input className="input mono" readOnly value={phoneUrl}
-                     onFocus={(e) => e.target.select()} />
+            <div style={{ display: 'flex', gap: 20, alignItems: 'flex-start',
+                          flexWrap: 'wrap', marginBottom: 14 }}>
+              {/* Generated from the address the request came in on, so it is always
+                  the code for wherever this is actually running. */}
+              <img src="/install/qr.svg" alt="QR code that opens the field app"
+                   width="132" height="132"
+                   style={{ borderRadius: 10, border: '1px solid var(--line)', background: '#fff' }} />
+              <div style={{ flex: 1, minWidth: 240 }}>
+                <div className="field" style={{ marginBottom: 10 }}>
+                  <input className="input mono" readOnly value={phoneUrl}
+                         onFocus={(e) => e.target.select()} />
+                </div>
+                <a href="/install" target="_blank" rel="noreferrer"
+                   style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--brand)' }}>
+                  Open the page to print or email →
+                </a>
+                <div style={{ fontSize: 13, color: 'var(--text-3)', marginTop: 6 }}>
+                  A one-page sheet with the code and the steps on it.
+                </div>
+              </div>
             </div>
             <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap', fontSize: 13.5, color: 'var(--text-2)' }}>
               <div style={{ minWidth: 210, flex: 1 }}>

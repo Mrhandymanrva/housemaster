@@ -9,7 +9,7 @@
     "dev:web": "npm --prefix web run dev",
     "build": "npm --prefix web install --no-audit --no-fund && npm --prefix web run build",
     "start": "node server/index.js",
-    "test": "node field/qa-guard.test.js && node server/radonIntake.test.js && node server/attachments.test.js && node server/isnShapes.test.js && node server/zone.test.js",
+    "test": "node field/qa-guard.test.js && node server/radonIntake.test.js && node server/attachments.test.js && node server/isnShapes.test.js && node server/zone.test.js && node server/qr.test.js",
     "seed:demo": "node scripts/seed.js",
     "gen:icons": "node scripts/gen-icons.js",
     "gen:demo-catalog": "node scripts/gen-demo-catalog.js",
@@ -22,6 +22,7 @@
     "express": "^4.21.2",
     "helmet": "^8.0.0",
     "jsonwebtoken": "^9.0.2",
-    "pg": "^8.13.1"
+    "pg": "^8.13.1",
+    "qrcode-generator": "^2.0.4"
   }
 }

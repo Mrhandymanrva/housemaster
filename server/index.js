@@ -8,6 +8,7 @@ import { readdir, readFile } from 'node:fs/promises';
 
 import { pool, q, describeTarget } from './lib/db.js';
 import { secretIsPlaceholder } from './lib/auth.js';
+import installRoutes from './routes/install.js';
 import { syncCatalog } from './catalog/sync.js';
 import { startIsnSchedule } from './isnSchedule.js';
 import authRoutes from './routes/auth.js';
@@ -71,6 +72,10 @@ app.use('/phone', express.static(phone, {
   },
 }));
 app.get(/^\/phone(\/.*)?$/, (_req, res) => res.sendFile(path.join(phone, 'index.html')));
+
+// How the phone gets there in the first place. Above the desktop app's
+// catch-all, which would otherwise answer /install with the React shell.
+app.use('/install', installRoutes);
 
 // serve the built desktop app
 const web = path.join(__dirname, '..', 'web', 'dist');

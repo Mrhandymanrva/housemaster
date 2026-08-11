@@ -327,3 +327,27 @@ input:focus, select:focus, textarea:focus {
 .login .mark { width: 52px; height: 52px; border-radius: 13px; font-size: 18px; margin: 0 auto 18px; }
 .login h1 { text-align: center; font-size: 21px; margin: 0 0 6px; }
 .login p  { text-align: center; color: var(--text-2); margin: 0 0 26px; font-size: 14.5px; }
+
+/* --------------------------------------------------------------- install */
+/* Left-aligned inside the centred login block on purpose: numbered steps are
+   read one at a time and centred lists make the eye hunt for each new start. */
+.install {
+  background: var(--brand-bg); border: 1px solid #BFE9CB;
+  border-radius: var(--r); padding: 14px 16px; margin-bottom: 22px; text-align: left;
+}
+.install h2 { margin: 0 0 6px; font-size: 16px; color: var(--brand-2); }
+.install p  { text-align: left; margin: 0; color: #235C36; font-size: 14px; }
+.install ol { margin: 10px 0 0; padding-left: 20px; color: #235C36; font-size: 14px; }
+.install ol li { margin-bottom: 6px; }
+.install ol li:last-child { margin-bottom: 0; }
+.install .install-now { margin-top: 12px; }
+
+.install-nudge {
+  background: var(--brand-bg); color: #235C36; border-radius: var(--r-sm);
+  padding: 12px 14px; font-size: 14px; margin-bottom: 14px;
+}
+.install-nudge .link {
+  border: 0; background: none; padding: 8px 12px 0 0; font: inherit;
+  font-weight: 600; color: var(--brand-2); min-height: 36px;
+}
+.install-nudge .link.dim { color: var(--text-3); font-weight: 500; }
