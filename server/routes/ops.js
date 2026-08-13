@@ -8,6 +8,7 @@ import { absorbPayloadImages, relinkAttachments } from '../attachments.js';
 import { OFFICE_ZONE, officeRanges, periodRange, PERIODS } from '../lib/zone.js';
 import { planClaim, changesAnything } from '../lib/kitClaim.js';
 import { moneyReport } from '../lib/money.js';
+import { weekBoard } from '../lib/weekBoard.js';
 
 /**
  * Some records are more than a row.
@@ -691,6 +692,32 @@ r.post('/field/kit-claim', requireAuth, wrap(async (req, res) => {
  * is. A tech has no reason to see the receivables list and every reason not to
  * be handed their colleagues' numbers.
  */
+/**
+ * The week Home opens on: who is working, when, and where the holes are.
+ *
+ * Open to everybody, because a schedule is not a secret and a tech looking at
+ * Home should see the same week the office does. What money it carries is
+ * another matter — that is stripped for anyone below admin, the same rule the
+ * phone follows.
+ */
+r.get('/week', requireAuth, wrap(async (req, res) => {
+  const board = await weekBoard({ query: q }, periodRange('week', new Date()));
+  if (['owner', 'admin'].includes(req.user.role)) return res.json({ ...board, money: true });
+
+  // Not a filter over the top of the numbers — the numbers do not go out.
+  const strip = (slot) => { const { fee, paid, ...rest } = slot; return rest; };
+  res.json({
+    ...board,
+    money: false,
+    days: board.days.map(({ booked, ...d }) => d),
+    inspectors: board.inspectors.map(({ booked, ...i }) => ({
+      ...i,
+      days: Object.fromEntries(Object.entries(i.days).map(([d, xs]) => [d, xs.map(strip)])),
+    })),
+    totals: (({ booked, unbilled, ...t }) => t)(board.totals),
+  });
+}));
+
 r.get('/money', requireAuth, requireRole('admin'), wrap(async (req, res) => {
   const range = periodRange(req.query.period, new Date());
   res.json(await moneyReport({ query: q }, range, { kinds: await jobKinds() }));

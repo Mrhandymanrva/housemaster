@@ -11,7 +11,7 @@
     "dev:web": "npm --prefix web run dev",
     "build": "npm --prefix web install --no-audit --no-fund && npm --prefix web run build",
     "start": "node server/index.js",
-    "test": "node server/roles.test.js && node field/qa-guard.test.js && node server/radonIntake.test.js && node server/attachments.test.js && node server/isnShapes.test.js && node server/zone.test.js && node server/qr.test.js && node server/import.test.js && node server/kitClaim.test.js && node server/workbook.test.js && node server/money.test.js && node server/revenueCheck.test.js",
+    "test": "node server/roles.test.js && node field/qa-guard.test.js && node server/radonIntake.test.js && node server/attachments.test.js && node server/isnShapes.test.js && node server/zone.test.js && node server/qr.test.js && node server/import.test.js && node server/kitClaim.test.js && node server/workbook.test.js && node server/money.test.js && node server/revenueCheck.test.js && node server/weekBoard.test.js",
     "seed:demo": "node scripts/seed.js",
     "gen:icons": "node scripts/gen-icons.js",
     "gen:demo-catalog": "node scripts/gen-demo-catalog.js",

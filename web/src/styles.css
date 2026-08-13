@@ -896,3 +896,72 @@ textarea.input { min-height: 92px; resize: vertical; }
 .rc-table tr.rc-app td { background: var(--brand-bg); }
 .rc-table tr.rc-app:hover td { background: var(--brand-bg); }
 .rc-note { margin-top: 10px; font-size: 12.5px; color: var(--text-3); }
+
+/* ------------------------------------------------------------ the week */
+/* Four across on Home; the Money screen's three-across grid is its own. */
+.home-kpis { grid-template-columns: repeat(4, 1fr); }
+@media (max-width: 1200px) { .home-kpis { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 640px)  { .home-kpis { grid-template-columns: 1fr; } }
+
+.week { width: 100%; border-collapse: separate; border-spacing: 0; }
+.week th {
+  padding: 8px 6px; font-size: 12px; font-weight: 600; color: var(--text-3);
+  text-transform: uppercase; letter-spacing: .04em; text-align: left;
+  border-bottom: 1px solid var(--line); position: static; cursor: default;
+}
+.week th.day { text-align: center; }
+.week th.day b { display: block; font-size: 15px; color: var(--text); text-transform: none;
+                 letter-spacing: -.01em; }
+.week th.day.today, .week th.day.today b { color: var(--brand-2); }
+.week td { border-bottom: 1px solid var(--surface-3); padding: 7px 5px; vertical-align: top; }
+/* Not .who — that is the rail's signed-in-user block, and it is a flex row, so
+   a cell borrowing the name laid the inspector's name and their totals side by
+   side and truncated both. A width on a table cell is also only a suggestion;
+   seven day columns squeeze it, so min-width is the instruction. */
+.week td.wk-who, .week th:first-child { width: 170px; min-width: 170px; padding-left: 2px; }
+.week td.wk-who .who-name, .week td.wk-who .who-sum {
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.week td.today-col { background: #FAFCFE; }
+.week tbody tr:last-child td { border-bottom: none; }
+
+.who-name { font-weight: 600; font-size: 14px; }
+.who-name.nobody { color: var(--amber); }
+.who-sum { font-size: 12px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.foot-label { font-size: 12px; color: var(--text-3); text-transform: uppercase;
+              letter-spacing: .04em; font-weight: 600; }
+
+/* A job. Colour says what kind of time it is, never whose it is — four
+   inspector colours cannot be told apart, so the row name carries identity. */
+.slot {
+  display: block; width: 100%; text-align: left; border-radius: 7px; padding: 5px 7px;
+  margin-bottom: 4px; font: inherit; font-size: 11.5px; line-height: 1.35;
+  border: 1px solid transparent; cursor: pointer;
+}
+.slot:last-child { margin-bottom: 0; }
+.slot .t { font-weight: 600; font-variant-numeric: tabular-nums; }
+.slot .w { display: block; opacity: .78; white-space: nowrap; overflow: hidden;
+           text-overflow: ellipsis; }
+.slot.job { background: var(--blue-bg); border-color: #CBDDF2; color: #1E4E80; }
+.slot.job.radon { background: var(--violet-bg); border-color: #D8D2F3; color: #4B3D91; }
+.slot.unassigned { background: var(--amber-bg); border-color: #F0D9A8; color: #8A5400; }
+.slot.free { border: 1px dashed var(--line-2); color: var(--text-3); text-align: center;
+             padding: 9px 7px; background: none; cursor: default; }
+.slot:not(.free):hover { filter: brightness(.97); }
+
+.daysum { font-size: 11.5px; color: var(--text-3); text-align: center; padding: 8px 4px 0;
+          font-variant-numeric: tabular-nums; }
+.daysum b { display: block; color: var(--text-2); font-size: 13px; }
+.week tfoot td { border-top: 1px solid var(--line); border-bottom: none; }
+
+.week .sw { width: 14px; height: 14px; border-radius: 4px; display: inline-block;
+            border: 1px solid transparent; }
+.sw.job { background: var(--blue-bg); border-color: #CBDDF2; }
+.sw.radon { background: var(--violet-bg); border-color: #D8D2F3; }
+.sw.un { background: var(--amber-bg); border-color: #F0D9A8; }
+
+.week-gap {
+  margin: 0 18px 16px; background: var(--surface-2); border: 1px dashed var(--line-2);
+  border-radius: 10px; padding: 11px 14px; font-size: 12.5px; color: var(--text-2);
+}
+.week-gap b { color: var(--text); }

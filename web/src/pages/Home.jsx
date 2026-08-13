@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { api } from '../lib/api.js';
 import Icon from '../components/Icons.jsx';
-import { date, num, n, whenText } from '../lib/format.js';
+import { date, num, n, money, whenText } from '../lib/format.js';
+import WeekBoard from '../components/WeekBoard.jsx';
 
 /* One big number, one sentence under it, and it takes you somewhere. */
 function Status({ tone, icon, big, small, onClick }) {
@@ -27,9 +28,13 @@ const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 
 export default function Home({ go }) {
   const [d, setD] = useState(null);
+  const [week, setWeek] = useState(null);
   const [err, setErr] = useState(null);
 
   useEffect(() => { api('/ops/dashboard').then(setD).catch((e) => setErr(e.message)); }, []);
+  // The week loads on its own, so a slow board does not hold up the rest of
+  // the screen and a broken one does not take the screen down with it.
+  useEffect(() => { api('/ops/week').then(setWeek).catch(() => setWeek(false)); }, []);
 
   if (err) return <div className="banner">{err}</div>;
   if (!d) return <div className="empty"><div className="spinner" style={{ margin: '0 auto 12px' }} />Loading…</div>;
@@ -40,8 +45,55 @@ export default function Home({ go }) {
   const open = d.horizon.filter((h) => !h.completed_date);
   const first = open.slice(0, 6);
 
+  const t = week?.totals;
+
   return (
     <div className="stack">
+      {/* What the week is worth and what is in it, before anything else. The
+          compliance view that used to open this screen is true but is not the
+          question somebody starts the day with. */}
+      {week && (
+        <div className="kpis home-kpis">
+          {week.money && (
+            <div className="kpi">
+              <div className="lbl">Scheduled this week</div>
+              <div className="val mono">{money(t.booked)}</div>
+              <div className="meta">
+                {t.jobs} job{t.jobs === 1 ? '' : 's'} on the book
+                {t.unbilled ? ` · ${money(t.unbilled)} not yet paid` : ''}
+              </div>
+            </div>
+          )}
+          <div className="kpi">
+            <div className="lbl">Inspections scheduled</div>
+            <div className="val mono">{t.jobs}</div>
+            <div className="meta">{t.done} done · {t.toCome} to come</div>
+          </div>
+          <div className="kpi">
+            <div className="lbl">Radon sets out</div>
+            <div className="val mono">{week.radonSets.out}</div>
+            <div className="meta">
+              {t.radonJobs} job{t.radonJobs === 1 ? '' : 's'} this week carry radon
+            </div>
+          </div>
+          <div className={`kpi ${past || t.unassigned ? 'attn' : ''}`}>
+            <div className="lbl">Needs you</div>
+            <div className="val mono">{past + (d.pendingFieldSubmissions || 0) + t.unassigned}</div>
+            <div className="meta">
+              {[past && `${past} past due`,
+                d.pendingFieldSubmissions && `${d.pendingFieldSubmissions} to review`,
+                t.unassigned && `${t.unassigned} unassigned`]
+                .filter(Boolean).join(' · ') || 'nothing waiting'}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {week && <WeekBoard board={week} onOpen={(s) => s.url && window.open(s.url, '_blank')} />}
+      {week === false && (
+        <div className="note">The week could not be loaded. Everything below still works.</div>
+      )}
+
       <div className="headline">
         <Status
           tone={past ? 'red' : 'green'} icon={past ? 'alert' : 'check'}
