@@ -57,13 +57,24 @@ r.get('/status', requireAuth, wrap(async (_req, res) => {
  * Field names and shapes only — an order carries a client's name, phone and
  * address, and none of that is needed to work out which envelope is in use.
  */
-r.get('/probe', requireAuth, requireRole('admin'), wrap(async (_req, res) => {
+r.get('/probe', requireAuth, requireRole('admin'), wrap(async (req, res) => {
+  // Anything the office types goes to ISN with our keys, so it has to be a
+  // path on ISN and not a way to point those keys at somebody else's host.
+  const asked = String(req.query.path || '').trim();
+  if (asked) {
+    if (!asked.startsWith('/') || asked.startsWith('//') || /^\/*[a-z][a-z0-9+.-]*:/i.test(asked)) {
+      throw bad('Give it a path on ISN, starting with a slash — like /events or /event/33398.');
+    }
+    return res.json({ probes: [await probe(asked)] });
+  }
+
   const probes = [];
-  // The last two are not used by the sync. They are here because the week grid
-  // on Home needs to know when somebody is blocked off, and ISN's calendar is
-  // the only place that could say so — asking is cheaper than guessing whether
-  // the plan exposes it.
+  // The last four are not used by the sync. The week grid on Home needs to
+  // know when somebody is blocked off, and in ISN that is an Event — a thing
+  // with a title, a creator and an id of its own. Whether the API will hand
+  // one over is a question, so it gets asked rather than assumed.
   for (const path of ['/me', '/users', '/orders', '/orders/footprints',
+                      '/events', '/calendar/events',
                       '/calendar/availableslots', '/availableslots']) {
     probes.push(await probe(path));
   }

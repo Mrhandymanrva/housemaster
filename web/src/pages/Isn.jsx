@@ -36,6 +36,7 @@ export default function Isn() {
   const [busy, setBusy] = useState(null);
   const [key, setKey] = useState('');
   const [probe, setProbe] = useState(null);
+  const [probePath, setProbePath] = useState('');
   const [orderNo, setOrderNo] = useState('');
   const [lookup, setLookup] = useState(null);
 
@@ -313,18 +314,27 @@ export default function Isn() {
             <div style={{ minWidth: 0 }}>
               <b>Check what ISN sends</b>
               <span>
-                Asks for footprints and reports the field names and shape of the answer —
-                never the contents, because an order carries a client's name and address.
-                Useful when a pull fails and the reason is the shape of the reply.
+                Reports the field names and shape of the answer — never the contents, because
+                an order carries a client's name and address. Blank checks the paths the sync
+                depends on plus the calendar ones; put a path in to ask for one thing, like an
+                event id off ISN's own calendar.
               </span>
             </div>
-            <button className="btn" style={{ marginLeft: 'auto' }} disabled={busy === 'probe'}
-                    onClick={() => run('probe', async () => {
-                      const out = await api('/isn/probe');
-                      setProbe(out.probes);
-                    })}>
-              {busy === 'probe' ? <span className="spinner" /> : null} Check
-            </button>
+            <span style={{ marginLeft: 'auto', display: 'flex', gap: 8, flexShrink: 0 }}>
+              {/* One path, when you know what you are looking for — an event id
+                  off ISN's own calendar, say. Blank asks the standard list. */}
+              <input className="input mono" style={{ width: 165 }} placeholder="/event/33398"
+                     value={probePath} onChange={(e) => setProbePath(e.target.value)}
+                     onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.nextSibling?.click()} />
+              <button className="btn" disabled={busy === 'probe'}
+                      onClick={() => run('probe', async () => {
+                        const at = probePath.trim();
+                        const out = await api(`/isn/probe${at ? `?path=${encodeURIComponent(at)}` : ''}`);
+                        setProbe(out.probes);
+                      })}>
+                {busy === 'probe' ? <span className="spinner" /> : null} Check
+              </button>
+            </span>
           </div>
 
           {probe && (
