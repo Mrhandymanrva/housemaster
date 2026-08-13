@@ -59,7 +59,12 @@ r.get('/status', requireAuth, wrap(async (_req, res) => {
  */
 r.get('/probe', requireAuth, requireRole('admin'), wrap(async (_req, res) => {
   const probes = [];
-  for (const path of ['/me', '/users', '/orders', '/orders/footprints']) {
+  // The last two are not used by the sync. They are here because the week grid
+  // on Home needs to know when somebody is blocked off, and ISN's calendar is
+  // the only place that could say so — asking is cheaper than guessing whether
+  // the plan exposes it.
+  for (const path of ['/me', '/users', '/orders', '/orders/footprints',
+                      '/calendar/availableslots', '/availableslots']) {
     probes.push(await probe(path));
   }
   res.json({ probes });
