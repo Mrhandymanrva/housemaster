@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../lib/api.js';
+import RevenueCheck from '../components/RevenueCheck.jsx';
 import Icon from '../components/Icons.jsx';
 
 const ago = (iso) => {
@@ -271,6 +272,8 @@ export default function Isn() {
               </select>
             </span>
           </div>
+
+          <RevenueCheck />
 
           <div className="setting">
             <div style={{ minWidth: 0 }}>

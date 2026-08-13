@@ -6,7 +6,8 @@ import { requireAuth, requireRole } from '../lib/auth.js';
 import { syncOnce, probe, getMe, extractList, unwrap, refreshUsers, listedByIsn }
   from '../integrations/isn.js';
 import { isnScheduleState } from '../isnSchedule.js';
-import { officeRanges } from '../lib/zone.js';
+import { officeRanges, periodRange } from '../lib/zone.js';
+import { revenueCheck } from '../lib/revenueCheck.js';
 
 const r = Router();
 
@@ -71,6 +72,27 @@ r.get('/probe', requireAuth, requireRole('admin'), wrap(async (_req, res) => {
  * filter makes of it. Guessing at a missing job from the outside costs a
  * deploy per hypothesis; this answers it in one.
  */
+/**
+ * Why doesn't the total match ISN's?
+ *
+ * A revenue figure that disagrees with the one the office already trusts puts
+ * every other number on the screen under suspicion, and the cause is usually a
+ * definition rather than a bug — both sides adding up real jobs, just not the
+ * same ones, or the same ones on different days.
+ *
+ * Pass the figure ISN is showing and this says which way of counting produces
+ * it. Everything comes from orders already stored, so it costs no API calls.
+ */
+r.get('/revenue-check', requireAuth, requireRole('office'), wrap(async (req, res) => {
+  const target = req.query.target === undefined || req.query.target === ''
+    ? null
+    : Number(String(req.query.target).replace(/[$,\s]/g, ''));
+  if (target !== null && !Number.isFinite(target)) {
+    throw bad('That does not read as an amount. Put in what ISN shows, like 49331 or $49,331.00.');
+  }
+  res.json(await revenueCheck({ query: q }, periodRange(req.query.period, new Date()), { target }));
+}));
+
 r.get('/order-lookup', requireAuth, requireRole('office'), wrap(async (req, res) => {
   const number = String(req.query.number || '').trim();
   if (!number) throw bad('Which order number?');
