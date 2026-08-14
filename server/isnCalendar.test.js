@@ -12,7 +12,7 @@
 import assert from 'node:assert/strict';
 import {
   normalizeEvent, nameFromTitle, reasonOf, daysCovered, discoverEvents, pullEvents,
-  apiMessage, distinctAnswers, EVENT_PATHS,
+  apiMessage, distinctAnswers, wantsParams, EVENT_PATHS,
 } from './integrations/isnCalendar.js';
 
 let pass = 0;
@@ -128,17 +128,31 @@ t('says nothing about a body that is not an explanation', () => {
   assert.equal(apiMessage(null), null);
 });
 
+t('reads an envelope that echoed its own parameters back', () => {
+  // /availableslots answers { status, message, count, zip, daysahead, offset }.
+  // Six keys and no records — a three-key limit hid the one sentence saying
+  // what it wanted.
+  const slots = { status: 'error', message: 'zip is required', count: 0,
+    zip: '', daysahead: 0, offset: null };
+  assert.equal(apiMessage(slots), 'error: zip is required');
+  assert.deepEqual(wantsParams(slots), ['zip', 'daysahead', 'offset'],
+    'and the keys that are not status or count are the question it takes');
+});
+
 t('will not print a body big enough to be carrying records', () => {
   // describeShape never prints values, because an order carries a client's
   // name, phone and address. This is the one exception to that, so it stays
   // narrow enough that it can only ever be an error envelope.
-  assert.equal(apiMessage({
-    status: 'error', message: 'nope', client: 'Jane Doe', address: '19 Cary St', phone: '555',
-  }), null, 'four keys and up is not an error envelope');
+  // Nesting is what separates an envelope from a payload: records arrive as
+  // arrays and objects, and only the message is ever printed anyway.
+  assert.equal(apiMessage({ status: 'ok', message: 'here you go',
+    orders: [{ client: 'Jane Doe', address: '19 Cary St' }] }), null, 'that is a payload');
+  assert.equal(apiMessage({ status: 'ok', message: 'x', client: { name: 'Jane' } }), null);
 });
 
 t('keeps a runaway message to a readable length', () => {
-  assert.ok(apiMessage({ status: 'e', message: 'x'.repeat(400) }).length <= 200);
+  // It goes on a settings screen, not into a log file.
+  assert.ok(apiMessage({ status: 'e', message: 'x'.repeat(400) }).length <= 240);
 });
 
 console.log('\nfinding the calendar');

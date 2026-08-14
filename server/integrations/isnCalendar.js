@@ -96,12 +96,38 @@ const USER_KEYS = ['user', 'userid', 'inspector', 'inspectorid', 'inspector1',
  */
 export function apiMessage(payload) {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return null;
-  const keys = Object.keys(payload);
-  if (keys.length > 3) return null;
+
   const msg = payload.message ?? payload.error ?? payload.Message ?? payload.detail;
   if (typeof msg !== 'string' || !msg.trim()) return null;
+
+  // The guard is not a key count — /availableslots answers with six keys and
+  // no records in it, echoing the search it wanted (zip, daysahead, offset),
+  // and a three-key limit hid the one sentence that says so. What separates an
+  // envelope from a payload is nesting: records arrive as arrays and objects.
+  // Only the message is ever printed; everything else is read to decide
+  // whether this is an envelope at all.
+  const values = Object.values(payload);
+  if (values.length > 15) return null;
+  if (values.some((v) => v !== null && typeof v === 'object')) return null;
+
   const status = payload.status ?? payload.Status ?? payload.code;
-  return `${status != null ? `${status}: ` : ''}${msg}`.slice(0, 200);
+  return `${status != null ? `${status}: ` : ''}${msg}`.slice(0, 240);
+}
+
+/**
+ * What an envelope wanted, when it told us by echoing it back.
+ *
+ * /availableslots returns { status, message, count, zip, daysahead, offset } —
+ * the shape of the question it expects, sent back with nothing filled in. The
+ * keys that are not status, message or count are the parameters it takes, and
+ * that is a far better list than anything guessable.
+ */
+export function wantsParams(payload) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return [];
+  const ignore = new Set(['status', 'message', 'error', 'detail', 'count', 'total', 'code']);
+  return Object.keys(payload)
+    .filter((k) => !ignore.has(k.toLowerCase()))
+    .filter((k) => payload[k] === null || typeof payload[k] !== 'object');
 }
 
 const asDate = (v) => {
@@ -182,11 +208,19 @@ export function normalizeEvent(raw, people = {}) {
  * @param get   (path) => payload      — the ISN caller
  * @param list  (payload, what) => []  — extractList, which knows ISN's wrappers
  */
-export async function discoverEvents(get, list, describe = () => null) {
+export async function discoverEvents(get, list, describe = () => null, { zip = null } = {}) {
   const tried = [];
+  // /availableslots echoed zip, daysahead and offset back as the question it
+  // wanted asking. The zip comes from the branch's own jobs rather than being
+  // invented, so what is asked for is somewhere they actually work.
+  const candidates = zip
+    ? [...EVENT_PATHS,
+       { path: `/availableslots?zip=${encodeURIComponent(zip)}&daysahead=60`, kind: 'slots' },
+       { path: `/calendar/availableslots?zip=${encodeURIComponent(zip)}&daysahead=60`, kind: 'slots' }]
+    : EVENT_PATHS;
   let empty = null;                 // answered, but with nothing in it
 
-  for (const candidate of EVENT_PATHS) {
+  for (const candidate of candidates) {
     try {
       const payload = await get(candidate.path);
       const rows = list(payload, 'events');
@@ -202,8 +236,9 @@ export async function discoverEvents(get, list, describe = () => null) {
       // because "0" and "0, and here is the envelope it came in" are very
       // different things to somebody trying to work out why.
       const said = apiMessage(payload);
-      tried.push({ ...candidate, ok: true, count: 0, said, shape: describe(payload) });
-      empty = empty || { ...candidate, count: 0, said, shape: describe(payload) };
+      const wants = wantsParams(payload);
+      tried.push({ ...candidate, ok: true, count: 0, said, wants, shape: describe(payload) });
+      empty = empty || { ...candidate, count: 0, said, wants, shape: describe(payload) };
     } catch (e) {
       tried.push({ ...candidate, ok: false, error: String(e.message).slice(0, 160) });
     }
@@ -295,7 +330,7 @@ export async function pullEvents(client,
   // that answered empty gets re-discovered, in case it was the range it wanted.
   let found = conn.events_path && Number(conn.events_count) > 0
     ? { found: true, path: conn.events_path, kind: conn.events_kind || 'events' }
-    : await discoverEvents(get, list, describe);
+    : await discoverEvents(get, list, describe, { zip: await busiestZip(client) });
 
   if (!found.found) {
     await client.query(
@@ -337,7 +372,15 @@ export async function pullEvents(client,
          + 'returned any events. '
          + (found.answers || []).map((a) =>
              `${a.paths[0]}${a.count > 1 ? ` and ${a.count - 1} more` : ''} — "${a.text}"`)
-           .slice(0, 4).join(' · '))
+           .slice(0, 4).join(' · ')
+         + (() => {
+             // An endpoint that echoed its own parameters back has told us what
+             // to send it, which beats anything guessable from here.
+             const asked = (found.tried || []).filter((x) => x.wants?.length);
+             return asked.length
+               ? ` · ${asked[0].path} takes: ${asked[0].wants.join(', ')}`
+               : '';
+           })())
      + (found.kind === 'slots'
        ? ' Availability only, so a block shows with no reason against it.'
        : ''),
@@ -348,6 +391,25 @@ export async function pullEvents(client,
     read: rows.length, written,
     unmatched: events.filter((e) => !e.employee_id).length,
   };
+}
+
+/**
+ * A postcode the branch actually works in.
+ *
+ * /availableslots wants one, and the honest source is the orders already
+ * synced rather than a number typed into the code — a branch that moves keeps
+ * working without anybody remembering this exists.
+ */
+async function busiestZip(client) {
+  try {
+    const { rows } = await client.query(
+      `SELECT property_zip AS zip FROM isn_orders
+        WHERE property_zip IS NOT NULL AND property_zip <> ''
+        GROUP BY property_zip ORDER BY count(*) DESC LIMIT 1`);
+    return rows[0]?.zip || null;
+  } catch {
+    return null;      // a diagnostic must not fail on the way to diagnosing
+  }
 }
 
 /** Who ISN's ids and names point at here. */
