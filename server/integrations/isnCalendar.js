@@ -20,33 +20,45 @@
  */
 
 /**
- * In order of how much they would tell us, best first.
+ * The paths worth asking, best first.
  *
- * /events answers — it is not a 404 — but with nothing in it, and ISN's own
- * convention on /orders is that a collection wants a range before it will say
- * anything. So the bare path is asked first and then the same path with the
- * spellings of "since" that this API is known to use, because a calendar that
- * defaults to today has no reason to mention next Tuesday's leave.
+ * /events is not a 404 and not empty — it answers with
+ * { status: "error", message: "missing or invalid action specified" }. So this
+ * corner of ISN is action-dispatched rather than REST, which nothing in the
+ * documentation says and no amount of guessing at nouns would have found. It
+ * took reading the sentence the API was already sending.
+ *
+ * The bare paths stay first, because they are what a REST endpoint would want
+ * and they cost one call to rule out. Then the same paths with the verbs an
+ * action API of this vintage tends to use. A date range is tried last, on the
+ * spelling ISN already uses for /orders, in case the calendar answers but
+ * defaults to today.
  */
-const since = () => {
-  const d = new Date(Date.now() - 45 * 86400000).toISOString().slice(0, 10);
+const BASES = ['/events', '/calendar/events', '/calendar'];
+const ACTIONS = ['list', 'getall', 'get', 'index', 'search', 'read', 'all'];
+
+const window = () => {
+  const from = new Date(Date.now() - 45 * 86400000).toISOString().slice(0, 10);
   const to = new Date(Date.now() + 120 * 86400000).toISOString().slice(0, 10);
-  return { d, to };
+  return { from, to };
 };
 
 export const EVENT_PATHS = [
-  { path: '/events', kind: 'events' },
-  { path: '/calendar/events', kind: 'events' },
-  { path: '/calendar', kind: 'events' },
-  // ISN filters /orders with ?after=, so it is the likeliest spelling here too.
-  { path: `/events?after=${since().d}`, kind: 'events' },
-  { path: `/events?startdate=${since().d}&enddate=${since().to}`, kind: 'events' },
-  { path: `/events?start=${since().d}&end=${since().to}`, kind: 'events' },
-  { path: `/events?from=${since().d}&to=${since().to}`, kind: 'events' },
-  // The fallback. Availability says when somebody is free, so blocked time is
-  // a hole rather than a block: we would know they cannot work and never why.
+  ...BASES.map((path) => ({ path, kind: 'events' })),
+  ...BASES.flatMap((base) => ACTIONS.map((a) => ({ path: `${base}?action=${a}`, kind: 'events' }))),
+  ...(() => {
+    const { from, to } = window();
+    return [
+      { path: `/events?action=list&startdate=${from}&enddate=${to}`, kind: 'events' },
+      { path: `/events?action=list&start=${from}&end=${to}`, kind: 'events' },
+      { path: `/events?action=list&after=${from}`, kind: 'events' },
+      { path: `/events?after=${from}`, kind: 'events' },
+    ];
+  })(),
+  // Last, and it can never say why somebody is blocked — only that they are.
   { path: '/calendar/availableslots', kind: 'slots' },
   { path: '/availableslots', kind: 'slots' },
+  { path: '/calendar/availableslots?action=list', kind: 'slots' },
 ];
 
 const first = (o, names) => {
@@ -242,9 +254,20 @@ export function daysCovered(event, zone = 'America/New_York') {
  * Everything takes its collaborators as arguments so this can be run against a
  * recorded client rather than a live ISN.
  */
-export async function pullEvents(client, { get, list, describe = () => null, now = new Date() } = {}) {
+export async function pullEvents(client,
+  { get, list, describe = () => null, now = new Date(), force = false } = {}) {
   const conn = (await client.query(
-    `SELECT events_path, events_kind, events_count FROM isn_connection LIMIT 1`)).rows[0] || {};
+    `SELECT events_path, events_kind, events_count, events_checked_at
+       FROM isn_connection LIMIT 1`)).rows[0] || {};
+
+  // Hunting through thirty candidates is fine when somebody asked for it and
+  // wasteful every hour forever. A press of the button always looks; the
+  // schedule waits a while before looking again.
+  const lookedRecently = conn.events_checked_at
+    && now - new Date(conn.events_checked_at) < 6 * 3600 * 1000;
+  if (!force && !Number(conn.events_count) && lookedRecently) {
+    return { found: false, skipped: true, checkedAt: conn.events_checked_at, written: 0 };
+  }
 
   // Use the path that answered last time; only go looking if there is none.
   // A remembered path is only worth reusing if it had something to say. One

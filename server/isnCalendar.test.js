@@ -159,6 +159,17 @@ await ta('keeps the first path that answers, best first', async () => {
   assert.deepEqual(asked, ['/events', '/calendar/events']);
 });
 
+t('asks with an action, because ISN said it wanted one', () => {
+  // "missing or invalid action specified" is the whole reason this list is not
+  // just three nouns. The bare paths stay first — they cost one call to rule
+  // out — and the verbs follow.
+  const paths = EVENT_PATHS.map((p) => p.path);
+  assert.deepEqual(paths.slice(0, 3), ['/events', '/calendar/events', '/calendar']);
+  assert.ok(paths.includes('/events?action=list'));
+  assert.ok(paths.some((p) => /action=/.test(p) && /startdate=/.test(p)), 'and one with a range');
+  assert.equal(EVENT_PATHS[EVENT_PATHS.length - 1].kind, 'slots', 'availability is the last resort');
+});
+
 await ta('says so when nothing answers, and what each one said', async () => {
   const out = await discoverEvents(async (p) => { throw new Error(`${p} → 404`); }, listOf);
   assert.equal(out.found, false);
@@ -206,6 +217,36 @@ await ta('clears out what the calendar no longer mentions', async () => {
   const swept = c.seen.find((x) => /DELETE FROM isn_events/.test(x.text));
   assert.ok(swept, 'anything not seen in this pull goes');
   assert.match(swept.text, /last_pulled_at < \$1/);
+});
+
+await ta('does not hunt through thirty candidates every hour', async () => {
+  // A fruitless search is fine when somebody asked for it and wasteful on a
+  // timer. The schedule waits; the button always looks.
+  const c = db({ conn: { events_count: 0, events_checked_at: '2026-08-11T14:00:00Z' }, people: [] });
+  const asked = [];
+  const out = await pullEvents(c, {
+    get: async (p) => { asked.push(p); throw new Error('404'); },
+    list: listOf, now: new Date('2026-08-11T15:00:00Z'),
+  });
+  assert.equal(out.skipped, true);
+  assert.equal(asked.length, 0, 'nothing was asked');
+
+  const forced = await pullEvents(c, {
+    get: async (p) => { asked.push(p); throw new Error('404'); },
+    list: listOf, now: new Date('2026-08-11T15:00:00Z'), force: true,
+  });
+  assert.equal(forced.skipped, undefined);
+  assert.ok(asked.length > 3, 'a press of the button looks anyway');
+});
+
+await ta('looks again once enough time has gone by', async () => {
+  const c = db({ conn: { events_count: 0, events_checked_at: '2026-08-10T14:00:00Z' }, people: [] });
+  let asked = 0;
+  await pullEvents(c, {
+    get: async () => { asked++; throw new Error('404'); },
+    list: listOf, now: new Date('2026-08-11T15:00:00Z'),
+  });
+  assert.ok(asked > 3, 'a day later it tries again on its own');
 });
 
 await ta('uses the remembered path instead of hunting again', async () => {

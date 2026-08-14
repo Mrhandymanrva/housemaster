@@ -115,7 +115,7 @@ r.get('/probe', requireAuth, requireRole('admin'), wrap(async (req, res) => {
  */
 r.post('/events/pull', requireAuth, requireRole('office'), wrap(async (_req, res) => {
   res.json(await pullEvents({ query: q },
-    { get: isnGet, list: extractList, describe: describeShape }));
+    { get: isnGet, list: extractList, describe: describeShape, force: true }));
 }));
 
 r.get('/revenue-check', requireAuth, requireRole('office'), wrap(async (req, res) => {
