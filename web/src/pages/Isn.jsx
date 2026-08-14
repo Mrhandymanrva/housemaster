@@ -37,6 +37,7 @@ export default function Isn() {
   const [key, setKey] = useState('');
   const [probe, setProbe] = useState(null);
   const [probePath, setProbePath] = useState('');
+  const [events, setEvents] = useState(null);
   const [orderNo, setOrderNo] = useState('');
   const [lookup, setLookup] = useState(null);
 
@@ -273,6 +274,63 @@ export default function Isn() {
               </select>
             </span>
           </div>
+
+          {/*
+            * The calendar, which is the only thing that can tell a free day on
+            * the week grid from a blocked one. There is no documentation for
+            * it, so the app finds the endpoint by asking and reports what it
+            * found — including "nothing answered", which is an answer.
+            */}
+          <div className="setting" style={{ marginTop: 16 }}>
+            <div style={{ minWidth: 0 }}>
+              <b>Time blocked off</b>
+              <span>
+                {c?.events_path
+                  ? <>Reading the calendar from <span className="mono">{c.events_path}</span>.{' '}
+                      {c.events_note}{' '}
+                      {c.events_kind === 'slots' && (
+                        <>That one reports when somebody is free rather than what is stopping
+                           them, so a block shows with no reason against it.</>
+                      )}</>
+                  : <>Not reading it yet. Blocked time is an <b>Event</b> in ISN and nothing in
+                       the docs says where to find one, so this asks the likely paths in turn and
+                       keeps whichever answers. Until it does, a free-looking day on the week grid
+                       may not be free.</>}
+                {c?.events_checked_at && (
+                  <> Last asked {new Date(c.events_checked_at).toLocaleString('en-US',
+                    { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}.</>
+                )}
+              </span>
+            </div>
+            <span style={{ marginLeft: 'auto', flexShrink: 0 }}>
+              <button className="btn" disabled={busy === 'events'}
+                      onClick={() => run('events', async () => {
+                        const out = await api('/isn/events/pull', { method: 'POST' });
+                        setEvents(out);
+                        await load();
+                      })}>
+                {busy === 'events' ? <span className="spinner" /> : null} Pull the calendar
+              </button>
+            </span>
+          </div>
+
+          {events && (
+            <div className={events.found && !events.error ? 'ok' : 'note'} style={{ marginTop: 10 }}>
+              {events.found && !events.error ? (
+                <>Read {events.read} from <span className="mono">{events.path}</span> and kept{' '}
+                  {events.written}.
+                  {events.unmatched > 0 && <> {events.unmatched} could not be matched to anybody
+                    here — those are left off the week grid rather than put on the wrong row.
+                    Linking that person below would place them.</>}
+                  {events.kind === 'slots' && <> This one only reports availability, so blocks
+                    show without a reason.</>}</>
+              ) : events.error ? (
+                <>{events.path} stopped answering: {events.error}</>
+              ) : (
+                <>Nothing on ISN answered. {events.tried?.map((t) => `${t.path} — ${t.ok ? 'no list in the reply' : t.error}`).join(' · ')}</>
+              )}
+            </div>
+          )}
 
           <RevenueCheck />
 
