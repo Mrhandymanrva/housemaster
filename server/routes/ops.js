@@ -9,6 +9,7 @@ import { OFFICE_ZONE, officeRanges, periodRange, PERIODS } from '../lib/zone.js'
 import { planClaim, changesAnything } from '../lib/kitClaim.js';
 import { moneyReport } from '../lib/money.js';
 import { weekBoard } from '../lib/weekBoard.js';
+import { calendarMonth } from '../lib/calendar.js';
 
 /**
  * Some records are more than a row.
@@ -715,6 +716,29 @@ r.get('/week', requireAuth, wrap(async (req, res) => {
       days: Object.fromEntries(Object.entries(i.days).map(([d, xs]) => [d, xs.map(strip)])),
     })),
     totals: (({ booked, unbilled, ...t }) => t)(board.totals),
+  });
+}));
+
+/**
+ * A month of the schedule, out of the orders already synced.
+ *
+ * Same rule as the week: the schedule is open, the money on it is not.
+ */
+r.get('/calendar', requireAuth, wrap(async (req, res) => {
+  const cal = await calendarMonth({ query: q }, req.query.month);
+  if (['owner', 'admin'].includes(req.user.role)) return res.json({ ...cal, money: true });
+
+  const strip = (it) => { const { fee, paid, ...rest } = it; return rest; };
+  res.json({
+    ...cal,
+    money: false,
+    weeks: cal.weeks.map((w) => w.map(({ booked, ...c }) => ({
+      ...c,
+      items: c.items.map(strip),
+      byInspector: c.byInspector.map(({ booked: _b, ...p }) => p),
+    }))),
+    inspectors: cal.inspectors.map(({ booked, ...p }) => p),
+    totals: (({ booked, ...t }) => t)(cal.totals),
   });
 }));
 

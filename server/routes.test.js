@@ -94,7 +94,7 @@ t('only worries about order where two patterns could match the same path', () =>
 console.log('\nthe rest of the app');
 
 t('ops serves the screens that hang off it', () => {
-  has(ops, 'GET /dashboard', 'GET /week', 'GET /money',
+  has(ops, 'GET /dashboard', 'GET /week', 'GET /calendar', 'GET /money',
     'GET /field/config', 'GET /field/today', 'GET /field/equipment',
     'GET /field/kit-claim', 'POST /field/kit-claim',
     'GET /field/jobs', 'GET /field/radon-jobs');

@@ -977,3 +977,75 @@ textarea.input { min-height: 92px; resize: vertical; }
   border-radius: 10px; padding: 11px 14px; font-size: 12.5px; color: var(--text-2);
 }
 .week-gap b { color: var(--text); }
+
+/* ── The month ─────────────────────────────────────────────────────────────
+   Built from orders and nothing else. Same rule as the week grid: colour says
+   what kind of time it is, initials say whose — four inspector colours cannot
+   be separated by somebody who does not see red and green, and the fifth hire
+   would break the key without anybody noticing. */
+.month { width: 100%; border-collapse: separate; border-spacing: 0; table-layout: fixed; }
+.month th {
+  font-size: 11.5px; text-transform: uppercase; letter-spacing: .05em; font-weight: 600;
+  color: var(--text-3); text-align: left; padding: 0 6px 8px;
+}
+.month td {
+  vertical-align: top; height: 96px; padding: 5px 6px 6px; cursor: pointer;
+  border: 1px solid var(--line); border-right: none; border-bottom: none;
+  background: var(--surface); transition: background .12s;
+}
+.month tr td:last-child { border-right: 1px solid var(--line); }
+.month tr:last-child td { border-bottom: 1px solid var(--line); }
+.month tr:first-child td:first-child { border-top-left-radius: 10px; }
+.month tr:first-child td:last-child { border-top-right-radius: 10px; }
+.month tr:last-child td:first-child { border-bottom-left-radius: 10px; }
+.month tr:last-child td:last-child { border-bottom-right-radius: 10px; }
+.month td:hover { background: var(--surface-3); }
+/* A day belonging to the month either side. Its work is real and is shown —
+   a square emptied for tidiness would be a lie about somebody's Monday. */
+.month td.outside { background: var(--surface-2); }
+.month td.outside .m-day { color: var(--text-3); }
+.month td.today-cell { box-shadow: inset 0 2px 0 var(--brand); }
+.month td.picked { background: var(--blue-bg); }
+
+.m-head { display: flex; align-items: baseline; gap: 6px; margin-bottom: 4px; }
+.m-day { font-size: 12.5px; font-weight: 600; color: var(--text-2);
+         font-variant-numeric: tabular-nums; }
+.m-n { margin-left: auto; font-size: 11px; color: var(--text-3);
+       font-variant-numeric: tabular-nums; }
+.m-job {
+  display: flex; gap: 5px; align-items: baseline; border-radius: 5px; padding: 2px 5px;
+  margin-bottom: 2px; font-size: 11px; line-height: 1.4;
+  background: var(--blue-bg); border: 1px solid #CBDDF2; color: #1E4E80;
+  white-space: nowrap; overflow: hidden;
+}
+.m-job b { font-variant-numeric: tabular-nums; font-weight: 600; }
+.m-job span { opacity: .8; overflow: hidden; text-overflow: ellipsis; }
+.m-job.radon { background: var(--violet-bg); border-color: #D8D2F3; color: #4B3D91; }
+.m-job.unassigned { background: var(--amber-bg); border-color: #F0D9A8; color: #8A5400; }
+.m-more { font-size: 10.5px; color: var(--text-3); padding-left: 5px; }
+
+/* Picking one name turns the month into that person's calendar, which is the
+   view somebody books against. */
+.chip {
+  font: inherit; font-size: 12.5px; padding: 5px 11px; border-radius: 999px; cursor: pointer;
+  border: 1px solid var(--line-2); background: var(--surface); color: var(--text-2);
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.chip:hover { border-color: var(--text-3); color: var(--text); }
+.chip.on { background: var(--brand); border-color: var(--brand); color: #fff; }
+.chip-n { font-size: 11px; opacity: .7; font-variant-numeric: tabular-nums; }
+
+.day-row {
+  display: flex; align-items: center; gap: 12px; padding: 9px 0;
+  border-bottom: 1px solid var(--line); font-size: 13.5px;
+}
+.day-row:last-child { border-bottom: none; }
+.d-time { width: 78px; flex-shrink: 0; font-variant-numeric: tabular-nums; font-weight: 600; }
+.d-who { width: 150px; flex-shrink: 0; color: var(--text-2); overflow: hidden;
+         text-overflow: ellipsis; white-space: nowrap; }
+.d-where { flex: 1; min-width: 0; color: var(--text-2); }
+.d-fee { font-variant-numeric: tabular-nums; color: var(--text-2); }
+.tag {
+  margin-left: 7px; font-size: 10.5px; text-transform: uppercase; letter-spacing: .04em;
+  padding: 2px 6px; border-radius: 5px; background: var(--surface-3); color: var(--text-3);
+}

@@ -136,10 +136,13 @@ export default function WeekBoard({ board, onOpen }) {
           day is only marked when ISN answered for that person and offered nothing.
         </div>
       ) : !board.blocked ? (
+        /* Settled, not pending. ISN refused every way in — there is no Events
+           resource — so telling somebody to go and pull the calendar would send
+           them after a thing that does not exist. */
         <div className="week-gap">
-          <b>A day showing free here may not be.</b> Time somebody has blocked off is an
-          Event in ISN and the app has not managed to read the calendar yet, so only booked
-          work is on this grid. Settings → ISN link → Pull the calendar.
+          <b>A day showing free here may not be.</b> Time somebody has blocked off is written on
+          ISN's own calendar and is not in its API, so this grid shows booked work only. An empty
+          square means nothing is booked, not that anybody is free.
         </div>
       ) : board.blocked.kind === 'slots' ? (
         <div className="week-gap">

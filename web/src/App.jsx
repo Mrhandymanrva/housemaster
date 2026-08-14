@@ -6,6 +6,7 @@ import { atLeast } from './lib/roles.js';
 import Icon from './components/Icons.jsx';
 import Login from './pages/Login.jsx';
 import Home from './pages/Home.jsx';
+import Calendar from './pages/Calendar.jsx';
 import Attention from './pages/Attention.jsx';
 import RecordsHub from './pages/RecordsHub.jsx';
 import Records from './pages/Records.jsx';
@@ -29,6 +30,7 @@ import CommandBar from './components/CommandBar.jsx';
 const NAV = [
   ['Today', [
     { key: 'home',      label: 'Home',            icon: 'home' },
+    { key: 'calendar',  label: 'Calendar',        icon: 'calendar' },
     { key: 'attention', label: 'Needs attention', icon: 'alert' },
     { key: 'inbox',     label: 'From the field',  icon: 'inbox' },
   ]],
@@ -52,6 +54,7 @@ const allowed = (n, role) => !n.min || atLeast(role, n.min);
 
 const PAGE = {
   home:      ['Home', "Where everything stands this morning."],
+  calendar:  ['Calendar', "The month, out of the inspections already scheduled in ISN. Pick a name to see just their calendar."],
   attention: ['Needs attention', 'Everything with a date on it, soonest first. This list builds itself from your records.'],
   radon:     ['Radon', 'Sets in the field, results, chain of custody, and where each monitor stands on its quality checks.'],
   records:   ['Records', 'All the information you keep. Pick something to look at.'],
@@ -156,6 +159,7 @@ export default function App() {
 
         <div className="content">
           {here === 'home' && <Home go={go} name={user.name} />}
+          {here === 'calendar' && <Calendar />}
           {here === 'attention' && <Attention />}
           {here === 'radon' && <Radon />}
           {here === 'records' && <RecordsHub entities={cat} go={go} />}
