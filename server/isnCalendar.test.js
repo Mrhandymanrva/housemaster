@@ -177,7 +177,7 @@ await ta('clears out what the calendar no longer mentions', async () => {
 
 await ta('uses the remembered path instead of hunting again', async () => {
   const asked = [];
-  const c = db({ conn: { events_path: '/calendar/events', events_kind: 'events' }, people: [] });
+  const c = db({ conn: { events_path: '/calendar/events', events_kind: 'events', events_count: 3 }, people: [] });
   await pullEvents(c, {
     get: async (p) => { asked.push(p); return []; },
     list: listOf,
@@ -187,7 +187,7 @@ await ta('uses the remembered path instead of hunting again', async () => {
 });
 
 await ta('says a remembered path has stopped answering rather than going quiet', async () => {
-  const c = db({ conn: { events_path: '/events', events_kind: 'events' }, people: [] });
+  const c = db({ conn: { events_path: '/events', events_kind: 'events', events_count: 2 }, people: [] });
   const out = await pullEvents(c, {
     get: async () => { throw new Error('ISN GET /events → 500'); },
     list: listOf,
@@ -208,7 +208,10 @@ await ta('records that availability cannot say why somebody is blocked', async (
   });
   assert.equal(out.kind, 'slots');
   const note = c.seen.find((x) => /events_note/.test(x.text));
-  assert.match(String(note.params[3] ?? note.params[1]), /availability only/);
+  // The caveat holds however many it returned — an empty availability reply is
+  // still an endpoint that could never have said why.
+  assert.match(String(note.params[3]), /Availability only/);
+  assert.match(String(note.params[3]), /nothing in it/);
 });
 
 console.log(`\n${pass} checks passed\n`);

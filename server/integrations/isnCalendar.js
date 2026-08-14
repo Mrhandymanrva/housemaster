@@ -19,11 +19,30 @@
  * keeps the whole payload for when one of them turns out to be wrong.
  */
 
-/** In order of how much they would tell us, best first. */
+/**
+ * In order of how much they would tell us, best first.
+ *
+ * /events answers — it is not a 404 — but with nothing in it, and ISN's own
+ * convention on /orders is that a collection wants a range before it will say
+ * anything. So the bare path is asked first and then the same path with the
+ * spellings of "since" that this API is known to use, because a calendar that
+ * defaults to today has no reason to mention next Tuesday's leave.
+ */
+const since = () => {
+  const d = new Date(Date.now() - 45 * 86400000).toISOString().slice(0, 10);
+  const to = new Date(Date.now() + 120 * 86400000).toISOString().slice(0, 10);
+  return { d, to };
+};
+
 export const EVENT_PATHS = [
   { path: '/events', kind: 'events' },
   { path: '/calendar/events', kind: 'events' },
   { path: '/calendar', kind: 'events' },
+  // ISN filters /orders with ?after=, so it is the likeliest spelling here too.
+  { path: `/events?after=${since().d}`, kind: 'events' },
+  { path: `/events?startdate=${since().d}&enddate=${since().to}`, kind: 'events' },
+  { path: `/events?start=${since().d}&end=${since().to}`, kind: 'events' },
+  { path: `/events?from=${since().d}&to=${since().to}`, kind: 'events' },
   // The fallback. Availability says when somebody is free, so blocked time is
   // a hole rather than a block: we would know they cannot work and never why.
   { path: '/calendar/availableslots', kind: 'slots' },
@@ -129,24 +148,35 @@ export function normalizeEvent(raw, people = {}) {
  * @param get   (path) => payload      — the ISN caller
  * @param list  (payload, what) => []  — extractList, which knows ISN's wrappers
  */
-export async function discoverEvents(get, list) {
+export async function discoverEvents(get, list, describe = () => null) {
   const tried = [];
+  let empty = null;                 // answered, but with nothing in it
+
   for (const candidate of EVENT_PATHS) {
     try {
       const payload = await get(candidate.path);
       const rows = list(payload, 'events');
-      // A 200 that is not a list of anything is not an answer. Recorded, so
-      // the ISN screen can show what it actually said.
-      tried.push({ ...candidate, ok: true, count: rows.length });
-      if (Array.isArray(rows)) {
-        return {
-          found: true, ...candidate, count: rows.length, sample: rows[0] || null, tried,
-        };
+
+      if (rows.length) {
+        tried.push({ ...candidate, ok: true, count: rows.length });
+        return { found: true, ...candidate, count: rows.length, sample: rows[0] || null, tried };
       }
+
+      // An empty answer is not the same as the right answer, and taking it
+      // would stop the search at a path that may simply want a date range —
+      // the next candidate might be the one that talks. The shape is recorded
+      // because "0" and "0, and here is the envelope it came in" are very
+      // different things to somebody trying to work out why.
+      tried.push({ ...candidate, ok: true, count: 0, shape: describe(payload) });
+      empty = empty || { ...candidate, count: 0, shape: describe(payload) };
     } catch (e) {
       tried.push({ ...candidate, ok: false, error: String(e.message).slice(0, 160) });
     }
   }
+
+  // Nothing had anything to say. Keep the first that answered at all, so the
+  // fact that the endpoint exists is not thrown away, and say it was empty.
+  if (empty) return { found: true, empty: true, ...empty, tried };
   return { found: false, tried };
 }
 
@@ -189,14 +219,16 @@ export function daysCovered(event, zone = 'America/New_York') {
  * Everything takes its collaborators as arguments so this can be run against a
  * recorded client rather than a live ISN.
  */
-export async function pullEvents(client, { get, list, now = new Date() } = {}) {
+export async function pullEvents(client, { get, list, describe = () => null, now = new Date() } = {}) {
   const conn = (await client.query(
-    `SELECT events_path, events_kind FROM isn_connection LIMIT 1`)).rows[0] || {};
+    `SELECT events_path, events_kind, events_count FROM isn_connection LIMIT 1`)).rows[0] || {};
 
   // Use the path that answered last time; only go looking if there is none.
-  let found = conn.events_path
+  // A remembered path is only worth reusing if it had something to say. One
+  // that answered empty gets re-discovered, in case it was the range it wanted.
+  let found = conn.events_path && Number(conn.events_count) > 0
     ? { found: true, path: conn.events_path, kind: conn.events_kind || 'events' }
-    : await discoverEvents(get, list);
+    : await discoverEvents(get, list, describe);
 
   if (!found.found) {
     await client.query(
@@ -225,12 +257,21 @@ export async function pullEvents(client, { get, list, now = new Date() } = {}) {
   const written = await write(client, events, found, now);
   await client.query(
     `UPDATE isn_connection SET events_path = $1, events_kind = $2,
-            events_checked_at = $3, events_note = $4`,
+            events_checked_at = $3, events_note = $4, events_count = $5`,
     [found.path, found.kind, now,
-     `${events.length} from ${found.path}`
+     // What it found, and — separately — what this endpoint can never tell us.
+     // The second is true however many it returned, so it is not folded into
+     // the first.
+     (events.length
+       ? `${events.length} from ${found.path}`
+       : `${found.path} answered, with nothing in it`
+         + (found.shape ? ` — it sent ${found.shape}` : '')
+         + '. Either nobody has blocked any time, or it wants a range or a user'
+         + ' this has not worked out yet.')
      + (found.kind === 'slots'
-       ? ' — availability only, so a block shows as unavailable with no reason.'
-       : '')]);
+       ? ' Availability only, so a block shows with no reason against it.'
+       : ''),
+     events.length]);
 
   return {
     found: true, path: found.path, kind: found.kind,

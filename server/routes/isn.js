@@ -3,7 +3,7 @@ import { Router } from 'express';
 import { q, tx } from '../lib/db.js';
 import { wrap, bad } from '../lib/http.js';
 import { requireAuth, requireRole } from '../lib/auth.js';
-import { syncOnce, probe, getMe, extractList, unwrap, refreshUsers, listedByIsn }
+import { syncOnce, probe, getMe, extractList, unwrap, refreshUsers, listedByIsn, describeShape }
   from '../integrations/isn.js';
 import { isnScheduleState } from '../isnSchedule.js';
 import { officeRanges, periodRange } from '../lib/zone.js';
@@ -114,7 +114,8 @@ r.get('/probe', requireAuth, requireRole('admin'), wrap(async (req, res) => {
  * branch that cannot see its work. One must not take the other down.
  */
 r.post('/events/pull', requireAuth, requireRole('office'), wrap(async (_req, res) => {
-  res.json(await pullEvents({ query: q }, { get: isnGet, list: extractList }));
+  res.json(await pullEvents({ query: q },
+    { get: isnGet, list: extractList, describe: describeShape }));
 }));
 
 r.get('/revenue-check', requireAuth, requireRole('office'), wrap(async (req, res) => {
