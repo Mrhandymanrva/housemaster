@@ -51,7 +51,7 @@ export function daysOf(range, zone = OFFICE_ZONE) {
 export async function weekBoard(client, range, { zone = OFFICE_ZONE } = {}) {
   const days = daysOf(range, zone);
 
-  const [jobs, people, radon, events, conn] = await Promise.all([
+  const [jobs, people, radon, events, conn, free] = await Promise.all([
     client.query(
       `SELECT o.id, o.order_number, o.order_url, o.total_fee, o.paid, o.has_radon,
               o.order_status, o.property_address, o.property_city, o.client_name,
@@ -88,6 +88,14 @@ export async function weekBoard(client, range, { zone = OFFICE_ZONE } = {}) {
 
     client.query(`SELECT events_path, events_kind, events_checked_at, events_note
                     FROM isn_connection LIMIT 1`),
+
+    // Which days ISN says somebody could take work. Only inspectors it
+    // answered for appear here at all, so an unanswered one stays unknown
+    // rather than looking booked solid.
+    client.query(
+      `SELECT employee_id, to_char(day, 'YYYY-MM-DD') AS day, slots
+         FROM isn_availability WHERE day >= $1::date AND day <= $2::date`,
+      [range.start, new Date(range.end.getTime() - 1)]),
   ]);
 
   const slot = (r) => ({
@@ -166,6 +174,25 @@ export async function weekBoard(client, range, { zone = OFFICE_ZONE } = {}) {
     line.blocked = (line.blocked || 0) + on.length;
   }
 
+  // A day with no free slot is a day that inspector cannot take work. That is
+  // not the same claim as "they are on leave", and the screen says which.
+  const asked = new Set(free.rows.map((r) => r.employee_id));
+  const openDays = new Set(free.rows.filter((r) => num(r.slots) > 0)
+    .map((r) => `${r.employee_id}|${r.day}`));
+  for (const line of rows.values()) {
+    if (!line.employeeId || !asked.has(line.employeeId)) continue;
+    line.availabilityKnown = true;
+    for (const d of days) {
+      if (openDays.has(`${line.employeeId}|${d.date}`)) continue;
+      if ((line.days[d.date] || []).length) continue;      // already has work on it
+      (line.days[d.date] ||= []).push({
+        id: `na-${line.employeeId}-${d.date}`, kind: 'unavailable',
+        reason: 'Not available', time: 'All day',
+      });
+      line.unavailable = (line.unavailable || 0) + 1;
+    }
+  }
+
   const list = [...rows.values()];
   // Busiest first, but whoever has nobody assigned to it goes last — it is a
   // problem to fix, not a person to compare.
@@ -198,5 +225,9 @@ export async function weekBoard(client, range, { zone = OFFICE_ZONE } = {}) {
       count: events.rows.length,
       unmatched: orphanBlocks,
     } : null,
+    // Availability is a weaker thing than a block and is reported as its own
+    // fact, so the screen never presents "cannot take work" as "on leave".
+    availability: free.rows.length
+      ? { inspectors: asked.size, days: free.rows.length } : null,
   };
 }

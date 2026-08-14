@@ -952,6 +952,11 @@ textarea.input { min-height: 92px; resize: vertical; }
    and cannot be mistaken for a job. */
 .slot.block { color: #5A6879; border-color: var(--line-2); cursor: default;
   background: repeating-linear-gradient(135deg, #EFF2F6 0 6px, #E3E8EF 6px 12px); }
+/* Fainter than a block on purpose. "ISN offered no slot" is a weaker claim
+   than "somebody wrote Off against this day", and it should not look as loud. */
+.slot.away { background: var(--surface-2); border: 1px dashed var(--line-2);
+             color: var(--text-3); text-align: center; cursor: default; }
+.sw.away { background: var(--surface-2); border: 1px dashed var(--line-2); }
 .sw.block { border-color: var(--line-2);
   background: repeating-linear-gradient(135deg, #EFF2F6 0 5px, #E3E8EF 5px 10px); }
 .slot:not(.free):hover { filter: brightness(.97); }

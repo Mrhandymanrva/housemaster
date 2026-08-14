@@ -12,7 +12,7 @@
 import assert from 'node:assert/strict';
 import {
   normalizeEvent, nameFromTitle, reasonOf, daysCovered, discoverEvents, pullEvents,
-  apiMessage, distinctAnswers, wantsParams, EVENT_PATHS,
+  apiMessage, distinctAnswers, wantsParams, pullAvailability, EVENT_PATHS,
 } from './integrations/isnCalendar.js';
 
 let pass = 0;
@@ -148,6 +148,10 @@ t('will not print a body big enough to be carrying records', () => {
   assert.equal(apiMessage({ status: 'ok', message: 'here you go',
     orders: [{ client: 'Jane Doe', address: '19 Cary St' }] }), null, 'that is a payload');
   assert.equal(apiMessage({ status: 'ok', message: 'x', client: { name: 'Jane' } }), null);
+  // But an empty one carries nothing, and refusing it would throw away the
+  // sentence explaining why it is empty — which is the whole question.
+  assert.equal(apiMessage({ status: 'error', message: 'no services match', slots: [] }),
+    'error: no services match');
 });
 
 t('keeps a runaway message to a readable length', () => {
@@ -317,6 +321,85 @@ await ta('records that availability cannot say why somebody is blocked', async (
   assert.match(String(note.params[3]), /none returned any events/);
   // and it names what each candidate said, so a lone different answer shows
   assert.match(String(note.params[3]), /availableslots/);
+});
+
+
+console.log('\nasking who is free');
+
+/** A client that answers the two reads pullAvailability makes. */
+function availDb(people, byInspector) {
+  const wrote = [];
+  return {
+    wrote,
+    async query(text, params) {
+      if (/FROM isn_orders/.test(text)) return { rows: [{ zip: '23220' }] };
+      if (/FROM employees/.test(text)) return { rows: people };
+      if (/INSERT INTO isn_availability/.test(text)) { wrote.push(params); return { rows: [] }; }
+      return { rows: [] };
+    },
+  };
+}
+
+const slotAt = (iso) => ({ userid: 'u', start: iso, end: iso });
+
+await ta('asks once per inspector, with the uuid the spec requires', async () => {
+  const asked = [];
+  const c = availDb([{ id: 'emp-1', full_name: 'B', isn_user_id: 'usr-9' }], {});
+  await pullAvailability(c, {
+    get: async (p) => { asked.push(p); return { slots: [slotAt('2026-08-10T13:00:00Z')] }; },
+  });
+  assert.equal(asked.length, 1);
+  assert.match(asked[0], /inspector=usr-9/);
+  assert.match(asked[0], /daysahead=60/);
+  assert.match(asked[0], /zip=23220/, "and a postcode off the branch's own jobs");
+});
+
+await ta('records the days somebody could take work', async () => {
+  const c = availDb([{ id: 'emp-1', full_name: 'B', isn_user_id: 'usr-9' }], {});
+  const out = await pullAvailability(c, {
+    get: async () => ({ slots: [
+      slotAt('2026-08-10T13:00:00Z'), slotAt('2026-08-10T17:00:00Z'),
+      slotAt('2026-08-12T13:00:00Z')] }),
+  });
+  assert.equal(out.withSlots, 1);
+  assert.equal(c.wrote.length, 2, 'two days, not three slots');
+  assert.deepEqual(c.wrote.map((w) => w[1]).sort(), ['2026-08-10', '2026-08-12']);
+  assert.equal(c.wrote.find((w) => w[1] === '2026-08-10')[2], 2, 'and how many that day');
+});
+
+await ta('treats an inspector with no slots at all as unknown, not unavailable', async () => {
+  // Sixty days of nothing means the question was wrong for them. Writing that
+  // down would shade two months of somebody's calendar on a bad assumption.
+  const c = availDb([{ id: 'emp-1', full_name: 'Priya', isn_user_id: 'usr-1' }], {});
+  const out = await pullAvailability(c, {
+    get: async () => ({ status: 'error', message: 'no services match', slots: [] }),
+  });
+  assert.equal(out.withSlots, 0);
+  assert.equal(c.wrote.length, 0, 'nothing written');
+  assert.match(out.failures[0], /Priya/, 'and the person is named, not just counted');
+  assert.match(out.failures[0], /no services match/, 'with what ISN said about them');
+});
+
+await ta('keeps going when one inspector errors', async () => {
+  const c = availDb([
+    { id: 'emp-1', full_name: 'A', isn_user_id: 'u1' },
+    { id: 'emp-2', full_name: 'B', isn_user_id: 'u2' },
+  ], {});
+  const out = await pullAvailability(c, {
+    get: async (p) => {
+      if (/u1/.test(p)) throw new Error('403 Forbidden');
+      return { slots: [slotAt('2026-08-10T13:00:00Z')] };
+    },
+  });
+  assert.equal(out.asked, 2);
+  assert.equal(out.withSlots, 1, 'the other one still answered');
+  assert.match(out.failures[0], /A: 403/);
+});
+
+await ta('says so when nobody is linked to ISN', async () => {
+  const out = await pullAvailability(availDb([], {}), { get: async () => ({ slots: [] }) });
+  assert.equal(out.asked, 0);
+  assert.match(out.note, /nobody is linked/);
 });
 
 console.log(`\n${pass} checks passed\n`);

@@ -8,7 +8,7 @@ import { syncOnce, probe, getMe, extractList, unwrap, refreshUsers, listedByIsn,
 import { isnScheduleState } from '../isnSchedule.js';
 import { officeRanges, periodRange } from '../lib/zone.js';
 import { revenueCheck } from '../lib/revenueCheck.js';
-import { pullEvents } from '../integrations/isnCalendar.js';
+import { pullEvents, pullAvailability } from '../integrations/isnCalendar.js';
 import { isnGet } from '../integrations/isn.js';
 
 const r = Router();
@@ -114,8 +114,17 @@ r.get('/probe', requireAuth, requireRole('admin'), wrap(async (req, res) => {
  * branch that cannot see its work. One must not take the other down.
  */
 r.post('/events/pull', requireAuth, requireRole('office'), wrap(async (_req, res) => {
-  res.json(await pullEvents({ query: q },
-    { get: isnGet, list: extractList, describe: describeShape, force: true }));
+  const events = await pullEvents({ query: q },
+    { get: isnGet, list: extractList, describe: describeShape, force: true });
+  // Availability is the only thing ISN's calendar really offers, so it is
+  // asked for whether or not events turned anything up.
+  let availability = null;
+  try {
+    availability = await pullAvailability({ query: q }, { get: isnGet });
+  } catch (e) {
+    availability = { error: e.message };
+  }
+  res.json({ ...events, availability });
 }));
 
 r.get('/revenue-check', requireAuth, requireRole('office'), wrap(async (req, res) => {

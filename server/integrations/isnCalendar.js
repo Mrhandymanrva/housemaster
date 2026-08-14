@@ -108,7 +108,16 @@ export function apiMessage(payload) {
   // whether this is an envelope at all.
   const values = Object.values(payload);
   if (values.length > 15) return null;
-  if (values.some((v) => v !== null && typeof v === 'object')) return null;
+  // Nesting is only a problem when something is in it. /availableslots answers
+  // with an empty slots array beside its explanation, and refusing that would
+  // throw away the sentence saying why the array is empty — which is the whole
+  // question. A nested value with anything in it is still a payload and is
+  // still refused.
+  const carries = (v) => {
+    if (v === null || typeof v !== 'object') return false;
+    return Array.isArray(v) ? v.length > 0 : Object.keys(v).length > 0;
+  };
+  if (values.some(carries)) return null;
 
   const status = payload.status ?? payload.Status ?? payload.code;
   return `${status != null ? `${status}: ` : ''}${msg}`.slice(0, 240);
@@ -447,4 +456,83 @@ async function write(client, events, found, now) {
   // Anything the calendar no longer mentions is gone from the calendar.
   await client.query(`DELETE FROM isn_events WHERE last_pulled_at < $1`, [now]);
   return written;
+}
+
+
+// ---------------------------------------------------------- availability
+
+/**
+ * When each inspector could take work.
+ *
+ * The documented calendar endpoint wants an inspector uuid and answers with
+ * the windows they are free — a booking question, asked one person at a time.
+ * It cannot say why somebody is unavailable, so nothing here pretends to.
+ *
+ * The guard that matters: an inspector whose whole window comes back empty is
+ * treated as unknown, not as unavailable every day. Zero slots across sixty
+ * days almost certainly means the question was wrong for them — no service
+ * match, no zip coverage — and shading two months of somebody's calendar on
+ * that would be the confident kind of wrong.
+ */
+export async function pullAvailability(client, { get, now = new Date(), daysahead = 60 } = {}) {
+  const zip = await busiestZip(client);
+  const { rows: people } = await client.query(
+    `SELECT id, full_name, isn_user_id FROM employees
+      WHERE status = 'Active' AND isn_user_id IS NOT NULL`);
+  if (!people.length) return { asked: 0, withSlots: 0, days: 0, note: 'nobody is linked to ISN yet' };
+
+  const key = (d) => new Intl.DateTimeFormat('en-CA',
+    { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
+
+  let withSlots = 0;
+  let days = 0;
+  const failures = [];
+
+  for (const p of people) {
+    const path = `/calendar/availableslots?inspector=${encodeURIComponent(p.isn_user_id)}`
+      + `&offset=0&daysahead=${daysahead}${zip ? `&zip=${encodeURIComponent(zip)}` : ''}`;
+    let payload;
+    try {
+      payload = await get(path);
+    } catch (e) {
+      failures.push(`${p.full_name}: ${String(e.message).slice(0, 90)}`);
+      continue;
+    }
+
+    const slots = Array.isArray(payload?.slots) ? payload.slots : [];
+    if (!slots.length) {
+      // Unknown, not unavailable. Anything already stored for them is cleared
+      // so a stale yes does not outlive the question that produced it.
+      failures.push(`${p.full_name}: no slots at all${apiMessage(payload) ? ` (${apiMessage(payload)})` : ''}`);
+      await client.query(`DELETE FROM isn_availability WHERE employee_id = $1`, [p.id]);
+      continue;
+    }
+    withSlots++;
+
+    const byDay = new Map();
+    for (const sl of slots) {
+      const at = sl?.start ? new Date(sl.start) : null;
+      if (!at || Number.isNaN(at.getTime())) continue;
+      const d = key(at);
+      byDay.set(d, (byDay.get(d) || 0) + 1);
+    }
+
+    await client.query(`DELETE FROM isn_availability WHERE employee_id = $1`, [p.id]);
+    for (const [day, n] of byDay) {
+      await client.query(
+        `INSERT INTO isn_availability (employee_id, day, slots, pulled_at)
+         VALUES ($1, $2::date, $3, $4)
+         ON CONFLICT (employee_id, day) DO UPDATE SET slots = EXCLUDED.slots,
+                                                     pulled_at = EXCLUDED.pulled_at`,
+        [p.id, day, n, now]);
+      days++;
+    }
+  }
+
+  return {
+    asked: people.length, withSlots, days, zip,
+    // Named rather than counted: an inspector the question does not work for
+    // is a person whose week will look unknown, and somebody should know why.
+    failures: failures.slice(0, 6),
+  };
 }

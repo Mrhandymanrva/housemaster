@@ -26,7 +26,7 @@ const job = (o) => ({
   employee_id: o.who ?? null, inspector_name: o.name ?? null,
 });
 
-function db(jobs = [], people = [], { events = [], conn = null, radon = { out: 0, pending: 0 } } = {}) {
+function db(jobs = [], people = [], { events = [], conn = null, free = [], radon = { out: 0, pending: 0 } } = {}) {
   const seen = [];
   return {
     seen,
@@ -36,6 +36,7 @@ function db(jobs = [], people = [], { events = [], conn = null, radon = { out: 0
       if (/FROM employees/.test(text)) return { rows: people };
       if (/FROM isn_events/.test(text)) return { rows: events };
       if (/FROM isn_connection/.test(text)) return { rows: conn ? [conn] : [{}] };
+      if (/FROM isn_availability/.test(text)) return { rows: free };
       return { rows: [radon] };
     },
   };
@@ -195,6 +196,43 @@ await ta('never asked is not the same as asked and nothing blocked', async () =>
   assert.ok(asked.blocked, 'asked');
   assert.equal(asked.blocked.count, 0, 'and nothing is blocked');
   assert.equal(asked.blocked.path, '/events');
+});
+
+console.log('\nwhat ISN can only infer');
+
+await ta('marks a day the inspector cannot take work', async () => {
+  const out = await weekBoard(db([], [{ id: 'emp-1', full_name: 'B' }], {
+    free: [{ employee_id: 'emp-1', day: '2026-08-10', slots: 4 },
+           { employee_id: 'emp-1', day: '2026-08-11', slots: 0 }],
+  }), RANGE);
+  const days = out.inspectors[0].days;
+  assert.equal(days['2026-08-10'].length, 0, 'a day with slots is just an open day');
+  assert.equal(days['2026-08-11'][0].kind, 'unavailable');
+  assert.equal(days['2026-08-11'][0].reason, 'Not available',
+    'and it never claims to know why');
+});
+
+await ta('says nothing at all about an inspector it could not ask', async () => {
+  // Zero slots across the whole window means the question was wrong for them,
+  // not that they are off for two months. Shading it would be the confident
+  // kind of wrong.
+  const out = await weekBoard(db([], [
+    { id: 'emp-1', full_name: 'Asked' }, { id: 'emp-2', full_name: 'Not asked' },
+  ], { free: [{ employee_id: 'emp-1', day: '2026-08-10', slots: 2 }] }), RANGE);
+  const notAsked = out.inspectors.find((x) => x.name === 'Not asked');
+  assert.ok(Object.values(notAsked.days).every((d) => d.length === 0), 'left blank, not shaded');
+  assert.ok(!notAsked.availabilityKnown);
+});
+
+await ta('does not shade over work that is already booked', async () => {
+  const out = await weekBoard(db([
+    job({ id: 'a', day: '2026-08-11', who: 'emp-1', name: 'B' }),
+  ], [{ id: 'emp-1', full_name: 'B' }], {
+    free: [{ employee_id: 'emp-1', day: '2026-08-10', slots: 3 }],
+  }), RANGE);
+  const day = out.inspectors[0].days['2026-08-11'];
+  assert.equal(day.length, 1);
+  assert.equal(day[0].kind, 'job', 'a fully booked day is not an unavailable one');
 });
 
 console.log('\nwhat the database would have refused');

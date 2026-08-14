@@ -40,6 +40,7 @@ export default function WeekBoard({ board, onOpen }) {
         <span><i className="sw job" /> Inspection</span>
         <span><i className="sw radon" /> With radon</span>
         {board.blocked && <span><i className="sw block" /> Blocked off</span>}
+        {board.availability && <span><i className="sw away" /> Not available</span>}
         <span><i className="sw un" /> Nobody assigned</span>
         <span style={{ color: 'var(--text-3)' }}>Dashed — nothing booked</span>
       </div>
@@ -71,7 +72,13 @@ export default function WeekBoard({ board, onOpen }) {
                   return (
                     <td key={d.date} className={d.date === today ? 'today-col' : undefined}>
                       {!slots.length && <span className="slot free">—</span>}
-                      {slots.map((s) => (s.kind === 'block' ? (
+                      {slots.map((s) => (s.kind === 'unavailable' ? (
+                        /* Fainter than a real block, because it is a weaker
+                           claim: ISN says they could not take work, never why. */
+                        <span key={s.id} className="slot away" title="ISN offers no slot that day">
+                          <span className="w">Not available</span>
+                        </span>
+                      ) : s.kind === 'block' ? (
                         /* Grey and hatched on purpose: blocked time is the
                            absence of billable work and must never read as a
                            job. It is also the one mark here that says the same
@@ -121,7 +128,14 @@ export default function WeekBoard({ board, onOpen }) {
 
       {/* What the grid does and does not know about blocked time. An empty
           column read as a free day is the failure worth spending words on. */}
-      {!board.blocked ? (
+      {board.availability && !board.blocked ? (
+        <div className="week-gap">
+          <b>Shaded days mean ISN offered no slot, not that somebody is on leave.</b> Its API
+          has no Events — the one calendar endpoint answers when an inspector could take work,
+          never what is stopping them. So "Off", "Hold" and the rest are not reachable, and a
+          day is only marked when ISN answered for that person and offered nothing.
+        </div>
+      ) : !board.blocked ? (
         <div className="week-gap">
           <b>A day showing free here may not be.</b> Time somebody has blocked off is an
           Event in ISN and the app has not managed to read the calendar yet, so only booked
