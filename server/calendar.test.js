@@ -11,7 +11,7 @@
  * shaping, which is where the mistakes live.
  */
 import assert from 'node:assert/strict';
-import { monthOf, gridOf, initialsOf, calendarMonth } from './lib/calendar.js';
+import { monthOf, gridOf, initialsOf, calendarMonth, unscheduledOrders } from './lib/calendar.js';
 
 let pass = 0;
 const t = (name, fn) => { fn(); pass++; console.log('  ok  ' + name); };
@@ -217,6 +217,84 @@ await ta('reads the day off the office clock', async () => {
   const asked = c.seen.find((x) => /FROM isn_orders/.test(x.text));
   assert.equal(asked.params[2], 'America/New_York');
   assert.match(asked.text, /to_char\(o\.scheduled_start AT TIME ZONE \$3, 'YYYY-MM-DD'\)/);
+});
+
+console.log('\nwaiting to be booked');
+
+const WAITING = [
+  { id: 'u1', order_number: '23501', order_url: 'https://isn/23501', client_name: 'Ana Reyes',
+    property_address: '5 Cary St', property_city: 'Richmond', total_fee: '425',
+    order_status: 'Unscheduled', scheduled_start: null, booked_on: '2026-07-30', total: 3 },
+  { id: 'u2', order_number: '23502', order_url: null, client_name: null,
+    property_address: '8 Broad St', property_city: 'Richmond', total_fee: '500',
+    order_status: 'Pending', scheduled_start: null, booked_on: null, total: 3 },
+  { id: 'u3', order_number: '23503', order_url: null, client_name: 'Kai Brooks',
+    property_address: null, property_city: null, total_fee: '0',
+    order_status: 'Unscheduled', scheduled_start: '2026-08-20T13:00:00Z',
+    booked_on: '2026-08-13', total: 3 },
+];
+
+const NOW = new Date('2026-08-14T12:00:00Z');
+
+function waitingDb(rows = WAITING) {
+  const seen = [];
+  return {
+    seen,
+    async query(text, params) {
+      seen.push({ text: text.replace(/\s+/g, ' ').trim(), params: params || [] });
+      return { rows };
+    },
+  };
+}
+
+await ta('lists what has no day on it, and how long it has waited', async () => {
+  const out = await unscheduledOrders(waitingDb(), { now: NOW });
+  assert.equal(out.count, 3);
+  assert.equal(out.items[0].waitingDays, 15);
+  assert.equal(out.items[0].address, '5 Cary St, Richmond');
+  assert.equal(out.items[0].fee, 425);
+});
+
+await ta('says nothing rather than zero when ISN did not say when it came in', async () => {
+  // An unknown wait shown as "0 days" reads as fresh, which is the opposite of
+  // what an order sitting with no date usually is.
+  const out = await unscheduledOrders(waitingDb(), { now: NOW });
+  assert.equal(out.items[1].waitingDays, null);
+  assert.equal(out.items[1].bookedOn, null);
+});
+
+await ta('falls back to the client when there is no address', async () => {
+  const out = await unscheduledOrders(waitingDb(), { now: NOW });
+  assert.equal(out.items[2].address, 'Kai Brooks');
+});
+
+await ta('keeps the date on an order ISN calls unscheduled', async () => {
+  // ISN contradicting itself is worth showing, not quietly resolving.
+  const out = await unscheduledOrders(waitingDb(), { now: NOW });
+  assert.equal(out.items[2].hadDate, '2026-08-20T13:00:00Z');
+});
+
+await ta('asks for orders with no date or an unscheduled status, oldest first', async () => {
+  const c = waitingDb();
+  await unscheduledOrders(c, { now: NOW });
+  const asked = c.seen[0];
+  assert.match(asked.text, /scheduled_start IS NULL OR lower\(btrim\(coalesce\(order_status/);
+  assert.match(asked.text, /<> 'deleted'/, 'a deleted order is not waiting for anything');
+  assert.match(asked.text, /<> 'canceled'/);
+  assert.match(asked.text, /ORDER BY \(raw->>'orderdate'\) ASC NULLS LAST/);
+});
+
+await ta('is honest about a list longer than it fetched', async () => {
+  const out = await unscheduledOrders(waitingDb(WAITING.map((r) => ({ ...r, total: 240 }))),
+    { now: NOW });
+  assert.equal(out.count, 240, 'the real number');
+  assert.equal(out.shown, 3, 'and how many of them are here');
+});
+
+await ta('says none rather than blowing up on an empty branch', async () => {
+  const out = await unscheduledOrders(waitingDb([]), { now: NOW });
+  assert.equal(out.count, 0);
+  assert.deepEqual(out.items, []);
 });
 
 console.log(`\n${pass} checks passed\n`);

@@ -18,6 +18,82 @@ import { money } from '../lib/format.js';
  * lives on ISN's own calendar and is not in its API, so an empty square means
  * nothing is booked — not that anybody is free.
  */
+/**
+ * Orders with no day on them.
+ *
+ * They cannot go on the grid — an order with no date cannot be drawn on a
+ * calendar without inventing one — and leaving them out of the app altogether
+ * is how a job goes quiet. So they sit under the month as a list, oldest
+ * first, because the one that has waited longest is the one at risk.
+ *
+ * It belongs to no month, and says so: stepping to September must not read as
+ * "September has three unbooked jobs".
+ */
+function Unscheduled({ money: showMoney }) {
+  const [d, setD] = useState(null);
+  const [all, setAll] = useState(false);
+
+  useEffect(() => { api('/ops/unscheduled').then(setD).catch(() => setD(false)); }, []);
+
+  if (d === false || !d) return null;
+  const shown = all ? d.items : d.items.slice(0, 8);
+
+  return (
+    <div className="card" style={{ marginTop: 14 }}>
+      <div className="card-head">
+        <div>
+          <h2>Waiting to be booked</h2>
+          <div className="sub">
+            {d.count
+              ? <>{d.count} order{d.count === 1 ? '' : 's'} with no day on
+                  {d.count === 1 ? ' it' : ' them'}, oldest first. Not part of any month.</>
+              : <>Nothing waiting — every order the app has synced is on somebody's day.</>}
+          </div>
+        </div>
+        {d.count > 8 && (
+          <button className="btn ghost" style={{ marginLeft: 'auto' }} onClick={() => setAll(!all)}>
+            {all ? 'Show fewer' : `Show all ${d.count}`}
+          </button>
+        )}
+      </div>
+      {d.count > 0 && (
+        <div className="card-body">
+          {shown.map((it) => (
+            <div key={it.id} className="day-row">
+              {/* Says its own unit: "73d" in a column with no header is a
+                  number somebody has to guess at. An unknown wait stays
+                  unknown — it is not a wait of zero days. */}
+              <span className="d-time" title={it.bookedOn ? `Came in ${it.bookedOn.slice(0, 10)}`
+                : 'ISN did not say when this came in'}>
+                {it.waitingDays == null ? '—'
+                  : it.waitingDays === 0 ? 'today'
+                  : `${it.waitingDays} day${it.waitingDays === 1 ? '' : 's'}`}
+              </span>
+              <span className="d-where">
+                {it.address}
+                {it.orderNumber && <span className="tag">#{it.orderNumber}</span>}
+                {/* ISN's own contradiction, shown rather than silently resolved. */}
+                {it.hadDate && <span className="tag">had a date</span>}
+              </span>
+              {showMoney && <span className="d-fee">{money(it.fee)}</span>}
+              {it.url && (
+                <a className="btn ghost sm" href={it.url} target="_blank" rel="noreferrer">
+                  Book it in ISN
+                </a>
+              )}
+            </div>
+          ))}
+          {d.shown < d.count && !all && (
+            <div className="m-more" style={{ padding: '8px 0 0' }}>
+              {d.count - d.shown} more beyond the {d.shown} loaded.
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Calendar() {
   const [month, setMonth] = useState(null);
   const [cal, setCal] = useState(null);
@@ -142,6 +218,8 @@ export default function Calendar() {
           only — everything on it comes from the orders already synced.
         </div>
       </div>
+
+      <Unscheduled money={cal.money} />
 
       {day && (
         <div className="card" style={{ marginTop: 14 }}>

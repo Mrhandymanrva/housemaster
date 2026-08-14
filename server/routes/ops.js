@@ -9,7 +9,7 @@ import { OFFICE_ZONE, officeRanges, periodRange, PERIODS } from '../lib/zone.js'
 import { planClaim, changesAnything } from '../lib/kitClaim.js';
 import { moneyReport } from '../lib/money.js';
 import { weekBoard } from '../lib/weekBoard.js';
-import { calendarMonth } from '../lib/calendar.js';
+import { calendarMonth, unscheduledOrders } from '../lib/calendar.js';
 import { realWork } from '../lib/orderStatus.js';
 
 /**
@@ -741,6 +741,18 @@ r.get('/calendar', requireAuth, wrap(async (req, res) => {
     inspectors: cal.inspectors.map(({ booked, ...p }) => p),
     totals: (({ booked, ...t }) => t)(cal.totals),
   });
+}));
+
+/**
+ * Orders with no day on them — work waiting to be booked.
+ *
+ * Its own route rather than part of the month, because it belongs to no month.
+ * Stepping to September must not make August's unbooked work disappear.
+ */
+r.get('/unscheduled', requireAuth, wrap(async (req, res) => {
+  const out = await unscheduledOrders({ query: q });
+  if (['owner', 'admin'].includes(req.user.role)) return res.json({ ...out, money: true });
+  res.json({ ...out, money: false, items: out.items.map(({ fee, ...i }) => i) });
 }));
 
 r.get('/money', requireAuth, requireRole('admin'), wrap(async (req, res) => {

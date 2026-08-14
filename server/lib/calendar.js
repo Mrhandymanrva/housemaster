@@ -18,9 +18,13 @@
  * on it would be a lie told for tidiness.
  */
 import { OFFICE_ZONE, fromOfficeWallClock, officeParts, dayKey } from './zone.js';
-import { realWork } from './orderStatus.js';
+import { realWork, statusIs, statusIsNot } from './orderStatus.js';
 
 const REAL_WORK = `${realWork('o')} AND o.scheduled_start IS NOT NULL`;
+
+/** An order that is cancelled or deleted is not waiting for anything. */
+const NOT_CANCELLED = [statusIsNot('', 'Deleted'), statusIsNot('', 'Canceled'),
+  statusIsNot('', 'Cancelled')].join(' AND ');
 
 const num = (v) => Number(v) || 0;
 
@@ -87,6 +91,56 @@ export function gridOf(m, zone = OFFICE_ZONE) {
     if (days.length > 42) break;                    // a calendar is never longer
   }
   return days;
+}
+
+/**
+ * Work ISN has on file that is not on anybody's day.
+ *
+ * The grids leave these out on purpose — an order with no date cannot be drawn
+ * on a calendar without inventing one. But leaving them out of the app
+ * altogether is how a job goes quiet: nobody checks a list that does not
+ * exist, and the order sits there being nobody's problem.
+ *
+ * Oldest first, because the one that has waited longest is the one at risk.
+ */
+export async function unscheduledOrders(client, { limit = 200, now = new Date() } = {}) {
+  const { rows } = await client.query(
+    `SELECT id, order_number, order_url, client_name,
+            property_address, property_city, total_fee, order_status, scheduled_start,
+            (raw->>'orderdate') AS booked_on,
+            COUNT(*) OVER ()::int AS total
+       FROM isn_orders
+      WHERE ${NOT_CANCELLED}
+        AND (scheduled_start IS NULL OR ${statusIs('', 'Unscheduled')})
+      ORDER BY (raw->>'orderdate') ASC NULLS LAST, order_number
+      LIMIT $1`,
+    [limit]);
+
+  return {
+    count: rows[0]?.total ?? 0,
+    shown: rows.length,
+    items: rows.map((r) => {
+      const booked = r.booked_on ? new Date(r.booked_on) : null;
+      const known = booked && !Number.isNaN(booked.getTime());
+      return {
+        id: r.id,
+        orderNumber: r.order_number,
+        url: r.order_url,
+        client: r.client_name,
+        address: [r.property_address, r.property_city].filter(Boolean).join(', ')
+          || r.client_name || 'Order',
+        fee: num(r.total_fee),
+        status: r.order_status,
+        bookedOn: known ? booked.toISOString() : null,
+        // Null when ISN did not say when it came in. An unknown wait is not a
+        // wait of zero days, and rounding it to zero would sort it as fresh.
+        waitingDays: known ? Math.max(0, Math.floor((now - booked) / 86400000)) : null,
+        // A date sitting on an order ISN calls unscheduled is ISN's own
+        // contradiction. Worth showing rather than quietly picking a side.
+        hadDate: r.scheduled_start || null,
+      };
+    }),
+  };
 }
 
 export async function calendarMonth(client, want, { zone = OFFICE_ZONE, now = new Date() } = {}) {
