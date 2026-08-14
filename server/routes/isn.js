@@ -74,7 +74,12 @@ r.get('/probe', requireAuth, requireRole('admin'), wrap(async (req, res) => {
   // with a title, a creator and an id of its own. Whether the API will hand
   // one over is a question, so it gets asked rather than assumed.
   for (const path of ['/me', '/users', '/orders', '/orders/footprints',
-                      '/events', '/calendar/events',
+                      // '/event/33398' answers 404, and ISN's convention is
+                      // plural for a collection and singular for one of them —
+                      // so the collection is still worth asking for. '/' is
+                      // there because a REST root often lists what it has, and
+                      // one index beats guessing nouns one round trip at a time.
+                      '/', '/calendar', '/events', '/calendar/events',
                       '/calendar/availableslots', '/availableslots']) {
     probes.push(await probe(path));
   }
