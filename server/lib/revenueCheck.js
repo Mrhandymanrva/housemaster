@@ -17,6 +17,7 @@
  * second opinion from the API.
  */
 import { OFFICE_ZONE, dayKey } from './zone.js';
+import { realWork, statusIs, statusIsNot } from './orderStatus.js';
 
 /**
  * How the app's own figure is defined, in one place, so this and the Money
@@ -28,6 +29,11 @@ export const APP_BASIS = {
   detail: 'Jobs by the day they are scheduled, cancelled and deleted and never-scheduled ones left out.',
 };
 
+// Cancelled and deleted only — this basis is looking for what ISN might still
+// be counting that the app has dropped.
+const NOT_CANCELLED = [statusIsNot('', 'Deleted'), statusIsNot('', 'Canceled'),
+  statusIsNot('', 'Cancelled')].join(' AND ');
+
 /**
  * Every way the month could reasonably be added up.
  *
@@ -37,30 +43,29 @@ export const APP_BASIS = {
  */
 const BASES = [
   { key: 'app', label: APP_BASIS.label, detail: APP_BASIS.detail,
-    where: `order_status NOT IN ('Canceled','Deleted','Unscheduled') AND scheduled_start IS NOT NULL`,
+    where: `${realWork('')} AND scheduled_start IS NOT NULL`,
     on: 'scheduled_start' },
 
   { key: 'complete', label: 'Only jobs marked complete',
     detail: 'Same days, but a job ISN has not ticked off yet does not count.',
-    where: `order_status = 'Complete'`, on: 'scheduled_start' },
+    where: statusIs('', 'Complete'), on: 'scheduled_start' },
 
   { key: 'not_complete', label: 'Only jobs not yet complete',
     detail: 'The other half of the one above — what is booked but not done.',
-    where: `order_status NOT IN ('Canceled','Deleted','Unscheduled','Complete')
-            AND scheduled_start IS NOT NULL`, on: 'scheduled_start' },
+    where: `${realWork('', ['complete'])} AND scheduled_start IS NOT NULL`, on: 'scheduled_start' },
 
   { key: 'paid', label: 'Only what has been paid',
     detail: 'Cash in rather than work booked.',
-    where: `order_status NOT IN ('Canceled','Deleted','Unscheduled') AND paid`,
+    where: `${realWork('')} AND paid`,
     on: 'scheduled_start' },
 
   { key: 'with_cancelled', label: 'Including cancelled jobs',
     detail: 'If ISN is still counting something the app has dropped.',
-    where: `order_status <> 'Deleted' AND scheduled_start IS NOT NULL`, on: 'scheduled_start' },
+    where: `${statusIsNot('', 'Deleted')} AND scheduled_start IS NOT NULL`, on: 'scheduled_start' },
 
   { key: 'booked_on', label: 'By the day the job was booked',
     detail: 'Rather than the day it happens — a common way for a report to differ.',
-    where: `order_status NOT IN ('Canceled','Deleted') AND (raw->>'orderdate') IS NOT NULL`,
+    where: `${NOT_CANCELLED} AND (raw->>'orderdate') IS NOT NULL`,
     on: `(raw->>'orderdate')::timestamptz` },
 ];
 

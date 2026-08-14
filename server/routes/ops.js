@@ -10,6 +10,7 @@ import { planClaim, changesAnything } from '../lib/kitClaim.js';
 import { moneyReport } from '../lib/money.js';
 import { weekBoard } from '../lib/weekBoard.js';
 import { calendarMonth } from '../lib/calendar.js';
+import { realWork } from '../lib/orderStatus.js';
 
 /**
  * Some records are more than a row.
@@ -248,7 +249,7 @@ r.get('/field/today', requireAuth, wrap(async (req, res) => {
        FROM isn_orders o
       WHERE ($1::uuid IS NULL OR $1 = ANY(o.crew_employee_ids))
         AND o.scheduled_start >= $4 AND o.scheduled_start < $5
-        AND o.order_status NOT IN ('Canceled', 'Deleted', 'Unscheduled')
+        AND ${realWork('o')}
       GROUP BY 1`, [who, R.dayStart, R.dayEnd, R.weekStart, R.weekEnd, ...kindParams]),
 
     q(`SELECT enabled, last_sync_at FROM isn_connection LIMIT 1`),
@@ -263,7 +264,7 @@ r.get('/field/today', requireAuth, wrap(async (req, res) => {
          CROSS JOIN LATERAL unnest(o.crew_employee_ids) AS x(employee_id)
          JOIN employees e ON e.id = x.employee_id
         WHERE o.scheduled_start >= $3 AND o.scheduled_start < $4
-          AND o.order_status NOT IN ('Canceled', 'Deleted', 'Unscheduled')
+          AND ${realWork('o')}
         GROUP BY e.id, e.full_name`,
       [R.dayStart, R.dayEnd, R.weekStart, R.weekEnd]) : { rows: [] },
 
@@ -288,7 +289,7 @@ r.get('/field/today', requireAuth, wrap(async (req, res) => {
            WHERE scheduled_start >= $3 AND scheduled_start < $4 AND NOT paid), 0) AS month_unpaid
        FROM isn_orders
       WHERE total_fee IS NOT NULL
-        AND order_status NOT IN ('Canceled', 'Deleted', 'Unscheduled')`,
+        AND ${realWork('')}`,
       [R.weekStart, R.weekEnd, R.monthStart, R.monthEnd]) : { rows: [] },
   ]);
 
@@ -395,7 +396,7 @@ r.get('/field/jobs', requireAuth, wrap(async (req, res) => {
        FROM isn_orders o
        LEFT JOIN employees e ON e.id = o.employee_id
       WHERE ($1::uuid IS NULL OR $1 = ANY(o.crew_employee_ids))
-        AND o.order_status NOT IN ('Canceled', 'Deleted', 'Unscheduled')
+        AND ${realWork('o')}
         AND ${when}
         AND ${filter}
       ORDER BY o.scheduled_start NULLS LAST
@@ -432,7 +433,7 @@ r.get('/field/radon-jobs', requireAuth, wrap(async (req, res) => {
               ON t.isn_order_uuid = o.id AND t.status <> 'Voided'
        LEFT JOIN employees e ON e.id = o.employee_id
       WHERE o.has_radon
-        AND o.order_status NOT IN ('Canceled', 'Deleted', 'Unscheduled')
+        AND ${realWork('o')}
         AND ($1::uuid IS NULL OR $1 = ANY(o.crew_employee_ids))
         -- yesterday through the week ahead: a set placed this morning may still
         -- be being written up, and techs pick up work further out than a day

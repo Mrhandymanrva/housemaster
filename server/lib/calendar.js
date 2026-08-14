@@ -18,9 +18,9 @@
  * on it would be a lie told for tidiness.
  */
 import { OFFICE_ZONE, fromOfficeWallClock, officeParts, dayKey } from './zone.js';
+import { realWork } from './orderStatus.js';
 
-const REAL_WORK = `o.order_status NOT IN ('Canceled', 'Deleted', 'Unscheduled')
-                   AND o.scheduled_start IS NOT NULL`;
+const REAL_WORK = `${realWork('o')} AND o.scheduled_start IS NOT NULL`;
 
 const num = (v) => Number(v) || 0;
 

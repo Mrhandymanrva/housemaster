@@ -22,10 +22,10 @@
  */
 import { OFFICE_ZONE, dayKey } from './zone.js';
 import { daysCovered, reasonOf } from '../integrations/isnCalendar.js';
+import { realWork } from './orderStatus.js';
 
 /** Cancelled, deleted and never-scheduled jobs are not work. */
-const REAL_WORK = `o.order_status NOT IN ('Canceled', 'Deleted', 'Unscheduled')
-                   AND o.scheduled_start IS NOT NULL`;
+const REAL_WORK = `${realWork('o')} AND o.scheduled_start IS NOT NULL`;
 
 const num = (v) => Number(v) || 0;
 
