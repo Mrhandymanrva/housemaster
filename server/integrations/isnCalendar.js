@@ -70,6 +70,28 @@ const ALLDAY_KEYS = ['allday', 'isallday', 'fullday'];
 const USER_KEYS = ['user', 'userid', 'inspector', 'inspectorid', 'inspector1',
   'assignedto', 'assigneduser', 'staff', 'staffid'];
 
+/**
+ * What ISN said, when what it said was an explanation.
+ *
+ * /events answers 200 with { status, message } — an error envelope, not an
+ * empty calendar. describeShape deliberately prints field names and never
+ * values, because an order carries a client's name and address; but this
+ * particular shape carries neither. It is the API explaining what it wants,
+ * and reading it is the difference between "0 events" and knowing why.
+ *
+ * Narrow on purpose: two or three keys, a string message, nothing else. Any
+ * other body stays unprinted.
+ */
+export function apiMessage(payload) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return null;
+  const keys = Object.keys(payload);
+  if (keys.length > 3) return null;
+  const msg = payload.message ?? payload.error ?? payload.Message ?? payload.detail;
+  if (typeof msg !== 'string' || !msg.trim()) return null;
+  const status = payload.status ?? payload.Status ?? payload.code;
+  return `${status != null ? `${status}: ` : ''}${msg}`.slice(0, 200);
+}
+
 const asDate = (v) => {
   if (!v) return null;
   const d = v instanceof Date ? v : new Date(String(v));
@@ -167,8 +189,9 @@ export async function discoverEvents(get, list, describe = () => null) {
       // the next candidate might be the one that talks. The shape is recorded
       // because "0" and "0, and here is the envelope it came in" are very
       // different things to somebody trying to work out why.
-      tried.push({ ...candidate, ok: true, count: 0, shape: describe(payload) });
-      empty = empty || { ...candidate, count: 0, shape: describe(payload) };
+      const said = apiMessage(payload);
+      tried.push({ ...candidate, ok: true, count: 0, said, shape: describe(payload) });
+      empty = empty || { ...candidate, count: 0, said, shape: describe(payload) };
     } catch (e) {
       tried.push({ ...candidate, ok: false, error: String(e.message).slice(0, 160) });
     }
@@ -264,10 +287,13 @@ export async function pullEvents(client, { get, list, describe = () => null, now
      // the first.
      (events.length
        ? `${events.length} from ${found.path}`
-       : `${found.path} answered, with nothing in it`
-         + (found.shape ? ` — it sent ${found.shape}` : '')
-         + '. Either nobody has blocked any time, or it wants a range or a user'
-         + ' this has not worked out yet.')
+       : found.said
+         // ISN explained itself. Whatever it said beats anything guessed here.
+         ? `${found.path} answered but sent no events. ISN said: "${found.said}"`
+         : `${found.path} answered, with nothing in it`
+           + (found.shape ? ` — it sent ${found.shape}` : '')
+           + '. Either nobody has blocked any time, or it wants a range or a user'
+           + ' this has not worked out yet.')
      + (found.kind === 'slots'
        ? ' Availability only, so a block shows with no reason against it.'
        : ''),

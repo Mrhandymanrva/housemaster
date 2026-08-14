@@ -11,7 +11,8 @@
  */
 import assert from 'node:assert/strict';
 import {
-  normalizeEvent, nameFromTitle, reasonOf, daysCovered, discoverEvents, pullEvents, EVENT_PATHS,
+  normalizeEvent, nameFromTitle, reasonOf, daysCovered, discoverEvents, pullEvents,
+  apiMessage, EVENT_PATHS,
 } from './integrations/isnCalendar.js';
 
 let pass = 0;
@@ -106,6 +107,38 @@ t('does not repeat or drop a day across a clock change', () => {
     starts_at: new Date('2026-10-31T13:00:00Z'), ends_at: new Date('2026-11-03T13:00:00Z') });
   assert.deepEqual(days, ['2026-10-31', '2026-11-01', '2026-11-02', '2026-11-03']);
   assert.equal(new Set(days).size, days.length);
+});
+
+console.log('\nwhen ISN explains itself');
+
+t('reads the message out of an error envelope', () => {
+  // /events answers 200 with { status, message }. That is not an empty
+  // calendar, it is the API saying what it wants, and it beats any guess made
+  // from this side.
+  assert.equal(apiMessage({ status: 'error', message: 'Missing required parameter: startdate' }),
+    'error: Missing required parameter: startdate');
+  assert.equal(apiMessage({ status: 404, message: 'No method by that name' }),
+    '404: No method by that name');
+});
+
+t('says nothing about a body that is not an explanation', () => {
+  assert.equal(apiMessage({ status: 'ok' }), null, 'no message to read');
+  assert.equal(apiMessage({ events: [], total: 0 }), null, 'a genuinely empty list');
+  assert.equal(apiMessage([]), null);
+  assert.equal(apiMessage(null), null);
+});
+
+t('will not print a body big enough to be carrying records', () => {
+  // describeShape never prints values, because an order carries a client's
+  // name, phone and address. This is the one exception to that, so it stays
+  // narrow enough that it can only ever be an error envelope.
+  assert.equal(apiMessage({
+    status: 'error', message: 'nope', client: 'Jane Doe', address: '19 Cary St', phone: '555',
+  }), null, 'four keys and up is not an error envelope');
+});
+
+t('keeps a runaway message to a readable length', () => {
+  assert.ok(apiMessage({ status: 'e', message: 'x'.repeat(400) }).length <= 200);
 });
 
 console.log('\nfinding the calendar');
