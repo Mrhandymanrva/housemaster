@@ -124,6 +124,28 @@ export function apiMessage(payload) {
 }
 
 /**
+ * A body that says no.
+ *
+ * "Nothing is booked" and "I do not know what you are asking for" arrive
+ * identically — 200, with a list-shaped hole where the records would be. The
+ * difference is the whole diagnosis. An empty calendar is worth remembering
+ * the path for; a refusal is a path that is not there.
+ *
+ * /events refuses on all thirty-one spellings, and treating that as an empty
+ * calendar left the app claiming to read a calendar that does not exist —
+ * which then hid the availability it really does have. So a body that names
+ * itself an error is not a candidate, however politely it answers.
+ */
+export function isRefusal(payload) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return false;
+  const status = String(payload.status ?? payload.Status ?? payload.code ?? '')
+    .trim().toLowerCase();
+  if (['error', 'fail', 'failed', 'failure', 'false', 'no', 'denied'].includes(status)) return true;
+  const err = payload.error ?? payload.Error;
+  return typeof err === 'string' && !!err.trim();
+}
+
+/**
  * What an envelope wanted, when it told us by echoing it back.
  *
  * /availableslots returns { status, message, count, zip, daysahead, offset } —
@@ -246,8 +268,13 @@ export async function discoverEvents(get, list, describe = () => null, { zip = n
       // different things to somebody trying to work out why.
       const said = apiMessage(payload);
       const wants = wantsParams(payload);
-      tried.push({ ...candidate, ok: true, count: 0, said, wants, shape: describe(payload) });
-      empty = empty || { ...candidate, count: 0, said, wants, shape: describe(payload) };
+      const refused = isRefusal(payload);
+      tried.push({ ...candidate, ok: true, count: 0, said, wants, refused, shape: describe(payload) });
+      // A refusal is recorded but never kept. Holding on to /events because it
+      // answered is how the app came to say it was reading a calendar from an
+      // endpoint that had told it, thirty-one times, that there is no calendar
+      // there.
+      if (!refused) empty = empty || { ...candidate, count: 0, said, wants, shape: describe(payload) };
     } catch (e) {
       tried.push({ ...candidate, ok: false, error: String(e.message).slice(0, 160) });
     }
@@ -309,6 +336,25 @@ export function daysCovered(event, zone = 'America/New_York') {
 // ------------------------------------------------------------------ sync
 
 /**
+ * What to write down when every way in was refused.
+ *
+ * Naming thirty-three paths is not a finding, it is the working out. The
+ * finding is that ISN has no Events resource and what the app uses instead,
+ * and that is what somebody reading Settings needs. ISN's own words lead,
+ * shortest-heard first, because the answer only one path gave is the thread
+ * worth pulling.
+ */
+function refusalNote(found) {
+  const answers = found.answers || [];
+  const ways = answers.reduce((a, x) => a + x.count, 0) || (found.tried || []).length;
+  const said = answers.slice(0, 3).map((a) =>
+    `${a.paths[0]}${a.count > 1 ? ` and ${a.count - 1} more` : ''} — "${a.text}"`).join(' · ');
+  return `ISN has no calendar endpoint. Asked ${ways} ways${said ? `: ${said}` : ''}. `
+    + 'Availability is read per inspector instead, which shows who cannot take work on a day '
+    + 'but never what is stopping them.';
+}
+
+/**
  * Read the calendar and write down what is blocked.
  *
  * Replaces the lot each time rather than merging. A handful of blocks a week
@@ -343,11 +389,10 @@ export async function pullEvents(client,
 
   if (!found.found) {
     await client.query(
-      `UPDATE isn_connection SET events_path = NULL, events_kind = NULL,
+      `UPDATE isn_connection SET events_path = NULL, events_kind = NULL, events_count = 0,
               events_checked_at = $1, events_note = $2`,
-      [now, 'Nothing on ISN answered for the calendar. '
-        + found.tried.map((t) => `${t.path}: ${t.ok ? 'no list' : t.error}`).join(' · ')]);
-    return { found: false, tried: found.tried, written: 0, kept: 0 };
+      [now, refusalNote(found)]);
+    return { found: false, answers: found.answers, tried: found.tried, written: 0, kept: 0 };
   }
 
   let payload;

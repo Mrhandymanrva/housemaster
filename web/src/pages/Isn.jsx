@@ -28,6 +28,40 @@ const reach = (days) => {
     : `${Math.round(months)} months`;
 };
 
+/**
+ * What availability came back, and who it could not be asked about.
+ *
+ * Names rather than a count, because an inspector ISN would not answer for is
+ * a person whose week shows as unknown on the grid, and a number gives nobody
+ * anything to act on. The reason it is unknown and not "unavailable" belongs
+ * here too: a run of empty slots is a question that did not work for them, not
+ * two months of leave.
+ */
+function AvailabilityLine({ a }) {
+  if (a.error) return <div style={{ marginTop: 6 }}>Availability could not be read: {a.error}</div>;
+  if (!a.asked) {
+    return (
+      <div style={{ marginTop: 6 }}>
+        <b>Nobody is linked to ISN yet</b>, so availability could not be asked for. ISN needs the
+        inspector's own id to answer, and the roster below is where people get linked.
+      </div>
+    );
+  }
+  return (
+    <div style={{ marginTop: 6 }}>
+      Availability: asked ISN about {a.asked} inspector{a.asked > 1 ? 's' : ''}
+      {a.zip ? <> around <span className="mono">{a.zip}</span></> : null}; {a.withSlots} could take
+      work on {a.days} day{a.days === 1 ? '' : 's'} between them. Days nobody offered a slot on are
+      shaded on the week grid as <i>not available</i> — which is not the same as on leave, and is
+      as close as this API gets.
+      {a.failures?.length ? (
+        <> ISN would not answer for {a.failures.join(', ')} — their weeks stay unmarked rather
+          than being shaded on a guess.</>
+      ) : null}
+    </div>
+  );
+}
+
 export default function Isn() {
   const [status, setStatus] = useState(null);
   const [roster, setRoster] = useState(null);
@@ -292,10 +326,14 @@ export default function Isn() {
                         <>That one reports when somebody is free rather than what is stopping
                            them, so a block shows with no reason against it.</>
                       )}</>
-                  : <>Not reading it yet. Blocked time is an <b>Event</b> in ISN and nothing in
-                       the docs says where to find one, so this asks the likely paths in turn and
-                       keeps whichever answers. Until it does, a free-looking day on the week grid
-                       may not be free.</>}
+                  /* Once ISN has refused every way in, the note carries the
+                     finding and repeating the search here would bury it. */
+                  : c?.events_note
+                    ? <>{c.events_note}</>
+                    : <>Not read yet. Blocked time is an <b>Event</b> in ISN and nothing in the
+                         docs says where to find one, so this asks the likely paths in turn and
+                         keeps whichever answers. Until it does, a free-looking day on the week
+                         grid may not be free.</>}
                 {c?.events_checked_at && (
                   <> Last asked {new Date(c.events_checked_at).toLocaleString('en-US',
                     { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}.</>
@@ -314,8 +352,15 @@ export default function Isn() {
             </span>
           </div>
 
+          {/*
+            * Two findings, kept apart. Whether ISN has a calendar to read is
+            * one question and what availability came back is another, and the
+            * second is the one that puts anything on the grid — so it is
+            * reported even when, especially when, the first found nothing.
+            */}
           {events && (
-            <div className={events.found && !events.error ? 'ok' : 'note'} style={{ marginTop: 10 }}>
+            <div className={events.availability?.days > 0 || (events.found && !events.error)
+              ? 'ok' : 'note'} style={{ marginTop: 10 }}>
               {events.found && !events.error ? (
                 <>Read {events.read} from <span className="mono">{events.path}</span> and kept{' '}
                   {events.written}.
@@ -327,8 +372,13 @@ export default function Isn() {
               ) : events.error ? (
                 <>{events.path} stopped answering: {events.error}</>
               ) : (
-                <>Nothing on ISN answered. {events.tried?.map((t) => `${t.path} — ${t.ok ? 'no list in the reply' : t.error}`).join(' · ')}</>
+                <><b>ISN has no Events in its API.</b> Every way in was refused
+                  {events.answers?.length ? <> — {events.answers.slice(0, 2).map((a) =>
+                    `${a.paths[0]}${a.count > 1 ? ` and ${a.count - 1} more` : ''}: "${a.text}"`)
+                    .join(' · ')}</> : null}. So "Off", "Hold" and the rest are written on ISN's
+                  own calendar and cannot be read from outside it.</>
               )}
+              {events.availability && <AvailabilityLine a={events.availability} />}
             </div>
           )}
 

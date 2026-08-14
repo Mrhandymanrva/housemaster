@@ -12,7 +12,7 @@
 import assert from 'node:assert/strict';
 import {
   normalizeEvent, nameFromTitle, reasonOf, daysCovered, discoverEvents, pullEvents,
-  apiMessage, distinctAnswers, wantsParams, pullAvailability, EVENT_PATHS,
+  apiMessage, distinctAnswers, wantsParams, pullAvailability, isRefusal, EVENT_PATHS,
 } from './integrations/isnCalendar.js';
 
 let pass = 0;
@@ -203,6 +203,43 @@ t('asks with an action, because ISN said it wanted one', () => {
   assert.equal(EVENT_PATHS[EVENT_PATHS.length - 1].kind, 'slots', 'availability is the last resort');
 });
 
+await ta('will not adopt a path that refused it', async () => {
+  // What actually happened: every candidate answered 200 with
+  // { status: "error", message: "missing or invalid action specified" }, the
+  // first was kept for having answered at all, and Settings then reported
+  // "Reading the calendar from /events" about an endpoint that had said
+  // thirty-three times that there is no calendar there. Worse, holding a path
+  // made the week grid think blocked time was known, which hid the
+  // availability that does work.
+  const out = await discoverEvents(
+    async () => ({ status: 'error', message: 'missing or invalid action specified' }), listOf);
+  assert.equal(out.found, false, 'a refusal is not a find');
+  assert.ok(!out.path, 'and nothing is remembered');
+  assert.equal(out.answers[0].text, 'error: missing or invalid action specified',
+    'but what it said is kept');
+});
+
+await ta('still keeps a path that answered with a genuinely empty calendar', async () => {
+  // The other half of the rule. Nothing booked is a real answer from a real
+  // endpoint, and throwing it away would send the app hunting all over again
+  // every time the week happens to be quiet.
+  const out = await discoverEvents(async () => ({ events: [], total: 0 }), listOf);
+  assert.equal(out.found, true);
+  assert.equal(out.empty, true);
+  assert.equal(out.path, '/events');
+});
+
+t('reads an error envelope as a refusal, and an empty list as an answer', () => {
+  assert.equal(isRefusal({ status: 'error', message: 'missing or invalid action specified' }), true);
+  assert.equal(isRefusal({ status: 'ERROR', message: 'x' }), true, 'however it is cased');
+  assert.equal(isRefusal({ error: 'no such method' }), true, 'or spelled');
+  assert.equal(isRefusal({ status: 'ok', events: [] }), false, 'nothing booked is not a refusal');
+  assert.equal(isRefusal({ events: [] }), false, 'and neither is saying nothing at all');
+  assert.equal(isRefusal({ error: '' }), false, 'an empty error field claims nothing');
+  assert.equal(isRefusal([]), false);
+  assert.equal(isRefusal(null), false);
+});
+
 await ta('says so when nothing answers, and what each one said', async () => {
   const out = await discoverEvents(async (p) => { throw new Error(`${p} → 404`); }, listOf);
   assert.equal(out.found, false);
@@ -250,6 +287,25 @@ await ta('clears out what the calendar no longer mentions', async () => {
   const swept = c.seen.find((x) => /DELETE FROM isn_events/.test(x.text));
   assert.ok(swept, 'anything not seen in this pull goes');
   assert.match(swept.text, /last_pulled_at < \$1/);
+});
+
+await ta('writes down the finding, not the working out', async () => {
+  // Settings showed "Reading the calendar from /events. Tried 33 ways in..." —
+  // a list of paths where a conclusion should be. What somebody needs to know
+  // is that ISN has no Events and what the app does instead.
+  const c = db({ people: [] });
+  const out = await pullEvents(c, {
+    get: async () => ({ status: 'error', message: 'missing or invalid action specified' }),
+    list: listOf, now: new Date('2026-08-11T15:00:00Z'), force: true,
+  });
+  assert.equal(out.found, false);
+  const wrote = c.seen.find((x) => /UPDATE isn_connection SET events_path = NULL/.test(x.text));
+  assert.ok(wrote, 'the path is cleared rather than left pointing at a refusal');
+  assert.match(wrote.text, /events_count = 0/, 'and the count with it');
+  const note = wrote.params[1];
+  assert.match(note, /no calendar endpoint/i);
+  assert.match(note, /missing or invalid action specified/, "in ISN's own words");
+  assert.match(note, /never what is stopping them/, 'and what is used instead');
 });
 
 await ta('does not hunt through thirty candidates every hour', async () => {
