@@ -12,7 +12,7 @@
 import assert from 'node:assert/strict';
 import {
   normalizeEvent, nameFromTitle, reasonOf, daysCovered, discoverEvents, pullEvents,
-  apiMessage, EVENT_PATHS,
+  apiMessage, distinctAnswers, EVENT_PATHS,
 } from './integrations/isnCalendar.js';
 
 let pass = 0;
@@ -159,6 +159,21 @@ await ta('keeps the first path that answers, best first', async () => {
   assert.deepEqual(asked, ['/events', '/calendar/events']);
 });
 
+t('reports each distinct answer once, the odd one out first', () => {
+  // Thirty candidates saying the same thing is one fact. One of them saying
+  // something different is the whole diagnosis, and it must not be buried
+  // under the majority.
+  const out = distinctAnswers([
+    { path: '/events', ok: true, said: 'error: missing or invalid action specified' },
+    { path: '/events?action=list', ok: true, said: 'error: missing or invalid action specified' },
+    { path: '/events?action=getall', ok: true, said: 'error: no permission for that action' },
+    { path: '/calendar', ok: false, error: 'ISN GET /calendar → 404' },
+  ]);
+  assert.equal(out[0].text, 'error: no permission for that action', 'the one that differed leads');
+  assert.equal(out[out.length - 1].count, 2, 'and the chorus is folded into one line');
+  assert.ok(out.every((a) => a.paths.length <= 2), 'with an example, not every path');
+});
+
 t('asks with an action, because ISN said it wanted one', () => {
   // "missing or invalid action specified" is the whole reason this list is not
   // just three nouns. The bare paths stay first — they cost one call to rule
@@ -285,7 +300,9 @@ await ta('records that availability cannot say why somebody is blocked', async (
   // The caveat holds however many it returned — an empty availability reply is
   // still an endpoint that could never have said why.
   assert.match(String(note.params[3]), /Availability only/);
-  assert.match(String(note.params[3]), /nothing in it/);
+  assert.match(String(note.params[3]), /none returned any events/);
+  // and it names what each candidate said, so a lone different answer shows
+  assert.match(String(note.params[3]), /availableslots/);
 });
 
 console.log(`\n${pass} checks passed\n`);

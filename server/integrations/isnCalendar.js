@@ -210,9 +210,30 @@ export async function discoverEvents(get, list, describe = () => null) {
   }
 
   // Nothing had anything to say. Keep the first that answered at all, so the
-  // fact that the endpoint exists is not thrown away, and say it was empty.
-  if (empty) return { found: true, empty: true, ...empty, tried };
-  return { found: false, tried };
+  // fact that the endpoint exists is not thrown away, and carry every distinct
+  // thing ISN said — one candidate getting a different answer from the rest is
+  // the thread worth pulling, and reporting only the first would hide it.
+  if (empty) return { found: true, empty: true, ...empty, answers: distinctAnswers(tried), tried };
+  return { found: false, answers: distinctAnswers(tried), tried };
+}
+
+/**
+ * What ISN said, once per distinct answer, with an example of who it said it to.
+ *
+ * Thirty-one candidates saying the same thing is one fact, not thirty-one. But
+ * one of them saying something different is the whole diagnosis, and averaging
+ * them into "nothing worked" would throw it away.
+ */
+export function distinctAnswers(tried) {
+  const byText = new Map();
+  for (const t of tried) {
+    const text = t.said || t.error || (t.ok ? 'answered with an empty list' : 'no answer');
+    if (!byText.has(text)) byText.set(text, { text, paths: [], count: 0 });
+    const e = byText.get(text);
+    e.count++;
+    if (e.paths.length < 2) e.paths.push(t.path);
+  }
+  return [...byText.values()].sort((a, b) => a.count - b.count);   // the odd one out first
 }
 
 /**
@@ -310,13 +331,13 @@ export async function pullEvents(client,
      // the first.
      (events.length
        ? `${events.length} from ${found.path}`
-       : found.said
-         // ISN explained itself. Whatever it said beats anything guessed here.
-         ? `${found.path} answered but sent no events. ISN said: "${found.said}"`
-         : `${found.path} answered, with nothing in it`
-           + (found.shape ? ` — it sent ${found.shape}` : '')
-           + '. Either nobody has blocked any time, or it wants a range or a user'
-           + ' this has not worked out yet.')
+       // ISN explained itself. Whatever it said beats anything guessed here,
+       // and where the candidates disagreed that difference leads first.
+       : `Tried ${(found.answers || []).reduce((a, x) => a + x.count, 0) || 1} ways in; none `
+         + 'returned any events. '
+         + (found.answers || []).map((a) =>
+             `${a.paths[0]}${a.count > 1 ? ` and ${a.count - 1} more` : ''} — "${a.text}"`)
+           .slice(0, 4).join(' · '))
      + (found.kind === 'slots'
        ? ' Availability only, so a block shows with no reason against it.'
        : ''),
