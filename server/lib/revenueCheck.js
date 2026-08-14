@@ -16,7 +16,7 @@
  * so every basis is computable from what is already stored. No re-sync, no
  * second opinion from the API.
  */
-import { OFFICE_ZONE } from './zone.js';
+import { OFFICE_ZONE, dayKey } from './zone.js';
 
 /**
  * How the app's own figure is defined, in one place, so this and the Money
@@ -106,7 +106,7 @@ export async function revenueCheck(client, range, { target = null } = {}) {
     `SELECT order_number, property_address, property_city, client_name,
             scheduled_start, total_fee, paid, order_status, has_radon,
             (raw->>'orderdate') AS booked_on,
-            (scheduled_start AT TIME ZONE $3)::date AS on_day
+            to_char(scheduled_start AT TIME ZONE $3, 'YYYY-MM-DD') AS on_day
        FROM isn_orders
       WHERE ${BASES[0].where} AND scheduled_start >= $1 AND scheduled_start < $2
       ORDER BY scheduled_start`,
@@ -128,7 +128,7 @@ export async function revenueCheck(client, range, { target = null } = {}) {
       orderNumber: r.order_number,
       address: [r.property_address, r.property_city].filter(Boolean).join(', '),
       client: r.client_name,
-      day: r.on_day,
+      day: dayKey(r.on_day),
       amount: num(r.total_fee),
       paid: r.paid === true,
       status: r.order_status,

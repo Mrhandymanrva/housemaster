@@ -176,6 +176,28 @@ await ta('adds up each day by inspector', async () => {
   assert.equal(brian.booked, 975);
 });
 
+await ta('puts the work on the month when the day arrives as a Date', async () => {
+  // What emptied the calendar in production while all sixteen of these passed.
+  // A Postgres `date` column is decoded into a JS Date, not a string, so
+  // String(on_day) reads "Mon Aug 03 2026 00:00:00 GMT+0000", matches no
+  // square, and every job is dropped without a word. The fake handed back
+  // strings because strings were convenient — which is why nothing caught it.
+  const asDriver = (d) => new Date(Number(d.slice(0, 4)), Number(d.slice(5, 7)) - 1,
+    Number(d.slice(8, 10)));
+  const cal = await calendarMonth(
+    db({ orders: ORDERS.map((o) => ({ ...o, on_day: asDriver(o.on_day) })) }),
+    '2026-08', { now: new Date('2026-08-14T12:00:00Z') });
+  assert.equal(cellOf(cal, '2026-08-03').jobs, 2);
+  assert.equal(cal.totals.jobs, 4);
+});
+
+await ta('asks Postgres for the day as text, so it cannot come back a Date', async () => {
+  const c = db();
+  await calendarMonth(c, '2026-08', { now: new Date('2026-08-14T12:00:00Z') });
+  const asked = c.seen.find((x) => /FROM isn_orders/.test(x.text));
+  assert.match(asked.text, /to_char\(o\.scheduled_start AT TIME ZONE \$3, 'YYYY-MM-DD'\) AS on_day/);
+});
+
 await ta('leaves out work that is not work', async () => {
   const c = db();
   await calendarMonth(c, '2026-08', { now: new Date('2026-08-14T12:00:00Z') });
@@ -191,7 +213,7 @@ await ta('reads the day off the office clock', async () => {
   await calendarMonth(c, '2026-08', { now: new Date('2026-08-14T12:00:00Z') });
   const asked = c.seen.find((x) => /FROM isn_orders/.test(x.text));
   assert.equal(asked.params[2], 'America/New_York');
-  assert.match(asked.text, /AT TIME ZONE \$3\)::date AS on_day/);
+  assert.match(asked.text, /to_char\(o\.scheduled_start AT TIME ZONE \$3, 'YYYY-MM-DD'\)/);
 });
 
 console.log(`\n${pass} checks passed\n`);

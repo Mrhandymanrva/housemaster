@@ -123,6 +123,33 @@ export function periodRange(period = 'month', now = new Date(), zone = OFFICE_ZO
 }
 
 /**
+ * A calendar date as YYYY-MM-DD, whatever shape it arrived in.
+ *
+ * Postgres `date` columns do not come back as strings. node-postgres decodes
+ * them into a JS Date at midnight in the server's own zone, so
+ * String(row.on_day) reads "Wed Aug 05 2026 00:00:00 GMT+0000" — which matches
+ * no day key anywhere, drops every job on the floor, and shows an empty grid
+ * with no error to explain it. The queries now ask for text, and this exists so
+ * that a driver's decision can never silently empty a screen again.
+ *
+ * A Date from a date column is read back through its own local parts, not
+ * converted through a timezone: it has no time and no zone in it, and putting
+ * it through one moves it a day.
+ */
+export function dayKey(v) {
+  if (v == null) return null;
+  if (typeof v === 'string') {
+    const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(v.trim());
+    return m ? `${m[1]}-${m[2]}-${m[3]}` : null;
+  }
+  if (v instanceof Date && !Number.isNaN(v.getTime())) {
+    return `${v.getFullYear()}-${String(v.getMonth() + 1).padStart(2, '0')}`
+      + `-${String(v.getDate()).padStart(2, '0')}`;
+  }
+  return null;
+}
+
+/**
  * A wall-clock reading in the office's zone, as a real instant.
  *
  * The offset depends on the instant and the instant depends on the offset, so

@@ -17,7 +17,7 @@
  * loaded — a blank last-Monday-of-August that actually has three inspections
  * on it would be a lie told for tidiness.
  */
-import { OFFICE_ZONE, fromOfficeWallClock, officeParts } from './zone.js';
+import { OFFICE_ZONE, fromOfficeWallClock, officeParts, dayKey } from './zone.js';
 
 const REAL_WORK = `o.order_status NOT IN ('Canceled', 'Deleted', 'Unscheduled')
                    AND o.scheduled_start IS NOT NULL`;
@@ -108,7 +108,7 @@ export async function calendarMonth(client, want, { zone = OFFICE_ZONE, now = ne
       `SELECT o.id, o.order_number, o.order_url, o.total_fee, o.paid, o.has_radon,
               o.order_status, o.property_address, o.property_city, o.client_name,
               o.scheduled_start,
-              (o.scheduled_start AT TIME ZONE $3)::date AS on_day,
+              to_char(o.scheduled_start AT TIME ZONE $3, 'YYYY-MM-DD') AS on_day,
               to_char(o.scheduled_start AT TIME ZONE $3, 'FMHH12:MI AM') AS at_time,
               o.employee_id,
               COALESCE(e.full_name, o.inspector_name) AS inspector_name
@@ -145,7 +145,7 @@ export async function calendarMonth(client, want, { zone = OFFICE_ZONE, now = ne
   for (const p of people.rows) person(p.id, p.full_name);
 
   for (const r of jobs.rows) {
-    const cell = byDate.get(String(r.on_day));
+    const cell = byDate.get(dayKey(r.on_day));
     if (!cell) continue;                       // an edge the grid does not show
     const p = person(r.employee_id, r.inspector_name);
     cell.items.push({

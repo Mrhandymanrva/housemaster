@@ -5,7 +5,7 @@
  * own board read 8. Every range here is half-open and both ends are pinned.
  */
 import assert from 'node:assert/strict';
-import { officeRanges, officeParts, fromOfficeWallClock, periodRange, PERIODS, OFFICE_ZONE }
+import { officeRanges, officeParts, fromOfficeWallClock, periodRange, PERIODS, OFFICE_ZONE, dayKey }
   from './lib/zone.js';
 
 let pass = 0;

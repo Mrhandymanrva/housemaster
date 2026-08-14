@@ -20,7 +20,7 @@
  * ISN answers, `blocked` stays null and the screen says so, because a grid
  * that quietly implies a free day is worse than one admitting it cannot tell.
  */
-import { OFFICE_ZONE } from './zone.js';
+import { OFFICE_ZONE, dayKey } from './zone.js';
 import { daysCovered, reasonOf } from '../integrations/isnCalendar.js';
 
 /** Cancelled, deleted and never-scheduled jobs are not work. */
@@ -56,7 +56,7 @@ export async function weekBoard(client, range, { zone = OFFICE_ZONE } = {}) {
       `SELECT o.id, o.order_number, o.order_url, o.total_fee, o.paid, o.has_radon,
               o.order_status, o.property_address, o.property_city, o.client_name,
               o.scheduled_start,
-              (o.scheduled_start AT TIME ZONE $3)::date AS on_day,
+              to_char(o.scheduled_start AT TIME ZONE $3, 'YYYY-MM-DD') AS on_day,
               to_char(o.scheduled_start AT TIME ZONE $3, 'FMHH12:MI AM') AS at_time,
               o.employee_id,
               COALESCE(e.full_name, o.inspector_name) AS inspector_name
@@ -134,7 +134,7 @@ export async function weekBoard(client, range, { zone = OFFICE_ZONE } = {}) {
   for (const r of jobs.rows) {
     const key = r.employee_id || (r.inspector_name ? `name:${r.inspector_name}` : '__none__');
     const line = row(key, r.inspector_name || 'Nobody assigned');
-    const day = String(r.on_day);
+    const day = dayKey(r.on_day);
     (line.days[day] ||= []).push(slot(r));
     line.jobs += 1;
     line.booked += num(r.total_fee);
@@ -143,7 +143,7 @@ export async function weekBoard(client, range, { zone = OFFICE_ZONE } = {}) {
 
   const byDay = Object.fromEntries(days.map((d) => [d.date, { booked: 0, jobs: 0 }]));
   for (const r of jobs.rows) {
-    const d = byDay[String(r.on_day)];
+    const d = byDay[dayKey(r.on_day)];
     if (!d) continue;                       // a job on an edge the window excludes
     d.booked += num(r.total_fee);
     d.jobs += 1;

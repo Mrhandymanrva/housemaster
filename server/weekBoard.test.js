@@ -69,6 +69,38 @@ t('is still seven days across a daylight-saving change', () => {
   assert.equal(new Set(d.map((x) => x.date)).size, 7, 'no day repeats');
 });
 
+console.log('\nthe shape the driver actually hands back');
+
+await ta('puts the work on the grid when the day arrives as a Date', async () => {
+  // The bug that emptied both grids in production while every test passed.
+  // A Postgres `date` column does not come back as a string — node-postgres
+  // decodes it into a JS Date at midnight in the server's own zone, so
+  // String(on_day) reads "Mon Aug 10 2026 00:00:00 GMT+0000" and matches no
+  // day key anywhere. Every job was dropped, silently, and the screen showed
+  // a week where nobody was working. The fakes handed back strings because
+  // strings were convenient, which is exactly why nothing caught it.
+  const asDriver = (d) => new Date(Number(d.slice(0, 4)), Number(d.slice(5, 7)) - 1,
+    Number(d.slice(8, 10)));
+  const out = await weekBoard(db([
+    { ...job({ id: 'a', day: '2026-08-10', who: 'emp-1', name: 'Bobby Hale', fee: '500' }),
+      on_day: asDriver('2026-08-10') },
+  ], [{ id: 'emp-1', full_name: 'Bobby Hale' }]), RANGE);
+
+  const bobby = out.inspectors.find((x) => x.employeeId === 'emp-1');
+  assert.equal(bobby.jobs, 1, 'the job is on his row');
+  assert.equal((bobby.days['2026-08-10'] || []).length, 1, 'and on the right day');
+  assert.equal(out.days.find((d) => d.date === '2026-08-10').booked, 500,
+    'and in that day’s total');
+});
+
+await ta('asks Postgres for the day as text, so it cannot come back a Date', async () => {
+  // The root fix. Normalising on the way in is the belt; this is the braces.
+  const c = db([], []);
+  await weekBoard(c, RANGE);
+  const asked = c.seen.find((x) => /FROM isn_orders/.test(x.text));
+  assert.match(asked.text, /to_char\(o\.scheduled_start AT TIME ZONE \$3, 'YYYY-MM-DD'\) AS on_day/);
+});
+
 console.log('\nwhat must not disappear');
 
 await ta('a job with nobody assigned gets its own row, last', async () => {
