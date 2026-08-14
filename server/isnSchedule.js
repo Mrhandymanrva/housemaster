@@ -13,7 +13,8 @@
  * restart.
  */
 import { q } from './lib/db.js';
-import { syncOnce } from './integrations/isn.js';
+import { syncOnce, isnGet, extractList } from './integrations/isn.js';
+import { pullEvents } from './integrations/isnCalendar.js';
 
 // An arbitrary but fixed number. Any other process taking this lock is us.
 const LOCK = 8110771;
@@ -53,7 +54,18 @@ async function tick() {
       : new Date();
     if (!due) return;
 
-    const out = await withLock(() => syncOnce({ source: 'schedule' }));
+    const out = await withLock(async () => {
+      const sync = await syncOnce({ source: 'schedule' });
+      // The calendar rides along but never takes the orders down with it: a
+      // week grid missing its grey blocks is a worse screen, an order sync
+      // that failed is a branch that cannot see its work.
+      try {
+        await pullEvents({ query: q }, { get: isnGet, list: extractList });
+      } catch (e) {
+        console.warn('[isn] calendar pull failed, orders were fine:', e.message);
+      }
+      return sync;
+    });
     if (out?.skipped) return;
     console.log(`[isn] pulled ${out?.orders ?? 0} orders, ${out?.sets ?? 0} sets`);
   } catch (err) {

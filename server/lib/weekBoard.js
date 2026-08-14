@@ -15,11 +15,13 @@
  * an inspector with no work still gets a row, because an empty week is the
  * thing worth seeing.
  *
- * Blocked-off time is not here yet. It is an Event in ISN and the sync only
- * reads orders, so the shape below has a place for it and nothing fills that
- * place — better an obvious gap than a grid that quietly implies a free day.
+ * Blocked-off time comes from ISN's calendar, which the app finds by asking
+ * rather than by assuming — see integrations/isnCalendar.js. When nothing on
+ * ISN answers, `blocked` stays null and the screen says so, because a grid
+ * that quietly implies a free day is worse than one admitting it cannot tell.
  */
 import { OFFICE_ZONE } from './zone.js';
+import { daysCovered, reasonOf } from '../integrations/isnCalendar.js';
 
 /** Cancelled, deleted and never-scheduled jobs are not work. */
 const REAL_WORK = `o.order_status NOT IN ('Canceled', 'Deleted', 'Unscheduled')
@@ -49,7 +51,7 @@ export function daysOf(range, zone = OFFICE_ZONE) {
 export async function weekBoard(client, range, { zone = OFFICE_ZONE } = {}) {
   const days = daysOf(range, zone);
 
-  const [jobs, people, radon] = await Promise.all([
+  const [jobs, people, radon, events, conn] = await Promise.all([
     client.query(
       `SELECT o.id, o.order_number, o.order_url, o.total_fee, o.paid, o.has_radon,
               o.order_status, o.property_address, o.property_city, o.client_name,
@@ -74,6 +76,18 @@ export async function weekBoard(client, range, { zone = OFFICE_ZONE } = {}) {
     client.query(
       `SELECT COUNT(*) AS out, COUNT(*) FILTER (WHERE result_status = 'Pending') AS pending
          FROM radon_tests WHERE status = 'Deployed'`),
+
+    // Anything overlapping the window at all, not just starting in it — a week
+    // off that began last Friday still blocks Monday.
+    client.query(
+      `SELECT isn_event_id, title, starts_at, ends_at, all_day, employee_id, inspector_name
+         FROM isn_events
+        WHERE starts_at < $2 AND COALESCE(ends_at, starts_at) >= $1
+        ORDER BY starts_at`,
+      [range.start, range.end]),
+
+    client.query(`SELECT events_path, events_kind, events_checked_at, events_note
+                    FROM isn_connection LIMIT 1`),
   ]);
 
   const slot = (r) => ({
@@ -127,6 +141,31 @@ export async function weekBoard(client, range, { zone = OFFICE_ZONE } = {}) {
     d.jobs += 1;
   }
 
+  // Blocks go on the row of whoever they belong to, on every day they touch.
+  // One that names nobody is kept aside rather than dropped or guessed at.
+  const orphanBlocks = [];
+  for (const e of events.rows) {
+    const block = {
+      id: `ev-${e.isn_event_id}`,
+      kind: 'block',
+      reason: reasonOf(e.title) || 'Blocked',
+      title: e.title,
+      allDay: e.all_day === true,
+      time: e.all_day === true ? 'All day'
+        : new Intl.DateTimeFormat('en-US', { timeZone: zone, hour: 'numeric', minute: '2-digit' })
+            .format(e.starts_at),
+      who: e.inspector_name || null,
+    };
+    const on = daysCovered({ starts_at: e.starts_at, ends_at: e.ends_at }, zone)
+      .filter((d) => days.some((x) => x.date === d));
+    if (!on.length) continue;
+
+    const line = e.employee_id ? rows.get(e.employee_id) : null;
+    if (!line) { orphanBlocks.push({ ...block, days: on }); continue; }
+    for (const d of on) (line.days[d] ||= []).push(block);
+    line.blocked = (line.blocked || 0) + on.length;
+  }
+
   const list = [...rows.values()];
   // Busiest first, but whoever has nobody assigned to it goes last — it is a
   // problem to fix, not a person to compare.
@@ -149,8 +188,15 @@ export async function weekBoard(client, range, { zone = OFFICE_ZONE } = {}) {
       unassigned: list.filter((x) => x.unassigned).reduce((a, x) => a + x.jobs, 0),
     },
     radonSets: { out: num(radon.rows[0]?.out), pending: num(radon.rows[0]?.pending) },
-    // Where blocked-off time will go. Empty until ISN's calendar is wired in;
-    // the screen says so rather than drawing an empty day as a free one.
-    blocked: null,
+    // null means nobody has managed to ask ISN yet, which is not the same as
+    // "asked, and nothing is blocked". The screen says which.
+    blocked: conn.rows[0]?.events_path ? {
+      path: conn.rows[0].events_path,
+      kind: conn.rows[0].events_kind,
+      checkedAt: conn.rows[0].events_checked_at,
+      note: conn.rows[0].events_note,
+      count: events.rows.length,
+      unmatched: orphanBlocks,
+    } : null,
   };
 }

@@ -8,6 +8,8 @@ import { syncOnce, probe, getMe, extractList, unwrap, refreshUsers, listedByIsn 
 import { isnScheduleState } from '../isnSchedule.js';
 import { officeRanges, periodRange } from '../lib/zone.js';
 import { revenueCheck } from '../lib/revenueCheck.js';
+import { pullEvents } from '../integrations/isnCalendar.js';
+import { isnGet } from '../integrations/isn.js';
 
 const r = Router();
 
@@ -104,6 +106,17 @@ r.get('/probe', requireAuth, requireRole('admin'), wrap(async (req, res) => {
  * Pass the figure ISN is showing and this says which way of counting produces
  * it. Everything comes from orders already stored, so it costs no API calls.
  */
+/**
+ * Read ISN's calendar for time somebody has blocked off.
+ *
+ * Separate from the order sync and allowed to fail on its own: the week grid
+ * losing its grey blocks is a worse screen, while the order sync failing is a
+ * branch that cannot see its work. One must not take the other down.
+ */
+r.post('/events/pull', requireAuth, requireRole('office'), wrap(async (_req, res) => {
+  res.json(await pullEvents({ query: q }, { get: isnGet, list: extractList }));
+}));
+
 r.get('/revenue-check', requireAuth, requireRole('office'), wrap(async (req, res) => {
   const target = req.query.target === undefined || req.query.target === ''
     ? null

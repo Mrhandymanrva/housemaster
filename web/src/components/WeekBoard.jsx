@@ -39,6 +39,7 @@ export default function WeekBoard({ board, onOpen }) {
       <div className="legend">
         <span><i className="sw job" /> Inspection</span>
         <span><i className="sw radon" /> With radon</span>
+        {board.blocked && <span><i className="sw block" /> Blocked off</span>}
         <span><i className="sw un" /> Nobody assigned</span>
         <span style={{ color: 'var(--text-3)' }}>Dashed — nothing booked</span>
       </div>
@@ -70,7 +71,16 @@ export default function WeekBoard({ board, onOpen }) {
                   return (
                     <td key={d.date} className={d.date === today ? 'today-col' : undefined}>
                       {!slots.length && <span className="slot free">—</span>}
-                      {slots.map((s) => (
+                      {slots.map((s) => (s.kind === 'block' ? (
+                        /* Grey and hatched on purpose: blocked time is the
+                           absence of billable work and must never read as a
+                           job. It is also the one mark here that says the same
+                           thing to somebody who cannot see colour. */
+                        <span key={s.id} className="slot block" title={s.title || s.reason}>
+                          <span className="t">{s.time}</span>
+                          <span className="w">{s.reason}</span>
+                        </span>
+                      ) : (
                         <button key={s.id}
                                 className={`slot ${p.unassigned ? 'unassigned' : 'job'} ${s.radon ? 'radon' : ''}`}
                                 title={`${s.time} · ${s.address}${s.city ? `, ${s.city}` : ''}`
@@ -79,7 +89,7 @@ export default function WeekBoard({ board, onOpen }) {
                           <span className="t">{s.time}</span>
                           <span className="w">{s.address}</span>
                         </button>
-                      ))}
+                      )))}
                     </td>
                   );
                 })}
@@ -109,13 +119,30 @@ export default function WeekBoard({ board, onOpen }) {
         </table>
       </div>
 
-      {/* Said out loud rather than left as an empty column somebody reads as a
-          free day. Goes when ISN's calendar is wired in. */}
-      <div className="week-gap">
-        Time somebody has blocked off is an <b>Event</b> in ISN, and the app only reads orders —
-        so a day can look free here when it is not. Settings → ISN link → Check says whether
-        the calendar will tell us.
-      </div>
+      {/* What the grid does and does not know about blocked time. An empty
+          column read as a free day is the failure worth spending words on. */}
+      {!board.blocked ? (
+        <div className="week-gap">
+          <b>A day showing free here may not be.</b> Time somebody has blocked off is an
+          Event in ISN and the app has not managed to read the calendar yet, so only booked
+          work is on this grid. Settings → ISN link → Pull the calendar.
+        </div>
+      ) : board.blocked.kind === 'slots' ? (
+        <div className="week-gap">
+          <b>Blocked time is shown without a reason.</b> ISN answered on{' '}
+          <span className="mono">{board.blocked.path}</span>, which reports when somebody is
+          free rather than what is stopping them — so a block is a hole in their availability
+          and the app cannot say whether it is leave, training or a dentist.
+        </div>
+      ) : board.blocked.unmatched?.length ? (
+        <div className="week-gap">
+          <b>{board.blocked.unmatched.length} blocked{' '}
+          {board.blocked.unmatched.length === 1 ? 'period' : 'periods'} could not be matched to
+          anybody</b> — {board.blocked.unmatched.map((b) => b.reason).join(', ')}. They are left
+          off the grid rather than put on the wrong row. Linking that person under People on your
+          ISN would place them.
+        </div>
+      ) : null}
     </div>
   );
 }

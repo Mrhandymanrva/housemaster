@@ -202,6 +202,9 @@ export async function probe(path) {
  * appearing only under that parameter, which is precisely what one set of
  * office keys needs.
  */
+/** The raw caller, for integrations that live in their own file. */
+export const isnGet = (path) => call(path);
+
 export const getFootprints = () => call('/orders/footprints?all=true');
 export const dropFootprint = (id) => call(`/orders/footprint/${id}`, { method: 'DELETE' });
 export const getOrder = (id) => call(`/order/${id}`);

@@ -26,7 +26,7 @@ const job = (o) => ({
   employee_id: o.who ?? null, inspector_name: o.name ?? null,
 });
 
-function db(jobs = [], people = [], radon = { out: 0, pending: 0 }) {
+function db(jobs = [], people = [], { events = [], conn = null, radon = { out: 0, pending: 0 } } = {}) {
   const seen = [];
   return {
     seen,
@@ -34,10 +34,21 @@ function db(jobs = [], people = [], radon = { out: 0, pending: 0 }) {
       seen.push({ text, params: params || [] });
       if (/FROM isn_orders/.test(text)) return { rows: jobs };
       if (/FROM employees/.test(text)) return { rows: people };
+      if (/FROM isn_events/.test(text)) return { rows: events };
+      if (/FROM isn_connection/.test(text)) return { rows: conn ? [conn] : [{}] };
       return { rows: [radon] };
     },
   };
 }
+
+const ASKED = { events_path: '/events', events_kind: 'events',
+  events_checked_at: '2026-08-11T14:00:00Z', events_note: '3 from /events' };
+
+const block = (o) => ({
+  isn_event_id: o.id, title: o.title, all_day: o.allDay ?? true,
+  starts_at: new Date(o.from), ends_at: o.to ? new Date(o.to) : null,
+  employee_id: o.who ?? null, inspector_name: o.name ?? null,
+});
 
 console.log('\nthe shape of a week');
 
@@ -130,9 +141,60 @@ await ta('a numeric fee arrives as a number, not the string Postgres sends', asy
   assert.equal(out.inspectors[0].days['2026-08-10'][0].fee, 612.5);
 });
 
-await ta('leaves a place for blocked time rather than implying there is none', async () => {
-  const out = await weekBoard(db([], []), RANGE);
-  assert.equal(out.blocked, null, 'null, not an empty list that reads as "checked, nothing there"');
+console.log('\nblocked time');
+
+await ta('greys the day somebody is off, on their own row', async () => {
+  const out = await weekBoard(db([], [{ id: 'emp-1', full_name: 'Brian Slazyk' }], {
+    events: [block({ id: '33398', title: 'Off (Brian Slazyk)', from: '2026-08-13T04:00:00Z', who: 'emp-1' })],
+    conn: ASKED,
+  }), RANGE);
+  const day = out.inspectors[0].days['2026-08-13'];
+  assert.equal(day.length, 1);
+  assert.equal(day[0].kind, 'block');
+  assert.equal(day[0].reason, 'Off', 'the name comes off the reason — the row already says who');
+  assert.equal(out.inspectors[0].blocked, 1);
+});
+
+await ta('covers every day a multi-day block touches', async () => {
+  // "Off" Wednesday to Friday has to grey all three, not just the first.
+  const out = await weekBoard(db([], [{ id: 'emp-1', full_name: 'B' }], {
+    events: [block({ id: 'e', title: 'PTO (B)', from: '2026-08-12T04:00:00Z', to: '2026-08-14T23:00:00Z', who: 'emp-1' })],
+    conn: ASKED,
+  }), RANGE);
+  const days = Object.entries(out.inspectors[0].days).filter(([, v]) => v.length).map(([d]) => d);
+  assert.deepEqual(days, ['2026-08-12', '2026-08-13', '2026-08-14']);
+});
+
+await ta('keeps a block that began before the week and runs into it', async () => {
+  const out = await weekBoard(db([], [{ id: 'emp-1', full_name: 'B' }], {
+    events: [block({ id: 'e', title: 'Off (B)', from: '2026-08-07T04:00:00Z', to: '2026-08-10T23:00:00Z', who: 'emp-1' })],
+    conn: ASKED,
+  }), RANGE);
+  const days = Object.entries(out.inspectors[0].days).filter(([, v]) => v.length).map(([d]) => d);
+  assert.ok(days.includes('2026-08-09') && days.includes('2026-08-10'), 'the days inside the week');
+  assert.ok(!days.includes('2026-08-07'), 'and nothing outside it');
+});
+
+await ta('sets a block nobody could be matched to aside rather than guessing', async () => {
+  // Putting it on the wrong row is worse than saying it could not be placed.
+  const out = await weekBoard(db([], [{ id: 'emp-1', full_name: 'B' }], {
+    events: [block({ id: 'e', title: 'Office closed', from: '2026-08-13T04:00:00Z' })],
+    conn: ASKED,
+  }), RANGE);
+  assert.equal(out.inspectors[0].days['2026-08-13'].length, 0, 'not on somebody else');
+  assert.equal(out.blocked.unmatched.length, 1);
+  assert.equal(out.blocked.unmatched[0].reason, 'Office closed');
+});
+
+await ta('never asked is not the same as asked and nothing blocked', async () => {
+  // The difference between "the app has no idea" and "the app checked".
+  const never = await weekBoard(db([], [], { conn: {} }), RANGE);
+  assert.equal(never.blocked, null, 'nobody has managed to ask ISN');
+
+  const asked = await weekBoard(db([], [], { conn: ASKED, events: [] }), RANGE);
+  assert.ok(asked.blocked, 'asked');
+  assert.equal(asked.blocked.count, 0, 'and nothing is blocked');
+  assert.equal(asked.blocked.path, '/events');
 });
 
 console.log('\nwhat the database would have refused');
