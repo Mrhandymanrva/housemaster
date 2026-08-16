@@ -21,10 +21,10 @@
  *   as the part that is counted, never as the cost of doing business.
  */
 import { OFFICE_ZONE } from './zone.js';
-import { realWork } from './orderStatus.js';
+import { countsAsRevenue } from './orderStatus.js';
 
 /** Cancelled, deleted and never-scheduled jobs are not work and not revenue. */
-const REAL_WORK = `${realWork('')}
+const REAL_WORK = `${countsAsRevenue('')}
                    AND scheduled_start IS NOT NULL`;
 
 /**
@@ -130,7 +130,7 @@ export async function moneyReport(client, range, { kinds = [], receivablesLimit 
          FROM months
          LEFT JOIN isn_orders o
            ON date_trunc('month', (o.scheduled_start AT TIME ZONE $2)) = months.m
-          AND ${realWork('o')}
+          AND ${countsAsRevenue('o')}
           AND o.scheduled_start IS NOT NULL
         GROUP BY m ORDER BY m`,
       [monthStart, OFFICE_ZONE]),

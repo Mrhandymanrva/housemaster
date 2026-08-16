@@ -17,7 +17,7 @@
  * second opinion from the API.
  */
 import { OFFICE_ZONE, dayKey } from './zone.js';
-import { realWork, statusIs, statusIsNot } from './orderStatus.js';
+import { countsAsRevenue, statusIs, statusIsNot } from './orderStatus.js';
 
 /**
  * How the app's own figure is defined, in one place, so this and the Money
@@ -43,7 +43,7 @@ const NOT_CANCELLED = [statusIsNot('', 'Deleted'), statusIsNot('', 'Canceled'),
  */
 const BASES = [
   { key: 'app', label: APP_BASIS.label, detail: APP_BASIS.detail,
-    where: `${realWork('')} AND scheduled_start IS NOT NULL`,
+    where: `${countsAsRevenue('')} AND scheduled_start IS NOT NULL`,
     on: 'scheduled_start' },
 
   { key: 'complete', label: 'Only jobs marked complete',
@@ -52,11 +52,12 @@ const BASES = [
 
   { key: 'not_complete', label: 'Only jobs not yet complete',
     detail: 'The other half of the one above — what is booked but not done.',
-    where: `${realWork('', ['complete'])} AND scheduled_start IS NOT NULL`, on: 'scheduled_start' },
+    where: `${countsAsRevenue('')} AND ${statusIsNot('', 'Complete')}`
+      + ' AND scheduled_start IS NOT NULL', on: 'scheduled_start' },
 
   { key: 'paid', label: 'Only what has been paid',
     detail: 'Cash in rather than work booked.',
-    where: `${realWork('')} AND paid`,
+    where: `${countsAsRevenue('')} AND paid`,
     on: 'scheduled_start' },
 
   { key: 'with_cancelled', label: 'Including cancelled jobs',

@@ -34,6 +34,26 @@ const col = (alias) => `${alias ? `${alias}.` : ''}order_status`;
 export const statusOf = (alias) => `lower(btrim(coalesce(${col(alias)}, '')))`;
 
 /**
+ * Money is not a display preference.
+ *
+ * The status switches were wired into the revenue queries as well as the
+ * grids, and they must not be. They answer "should this be drawn on a day?",
+ * which is a question about a calendar. Whether a job is revenue is a question
+ * about the business, and turning Complete off to tidy up a calendar took
+ * fourteen hundred finished jobs out of the month's takings without a word.
+ *
+ * Revenue has one definition and it does not move: everything except the jobs
+ * that never happened. A finished job is revenue. A booked job is revenue. If
+ * that ever needs to change it changes here, deliberately, and not as the side
+ * effect of tidying a screen.
+ */
+export const REVENUE_EXCLUDES = ['canceled', 'cancelled', 'deleted', 'unscheduled'];
+
+export function countsAsRevenue(alias = 'o') {
+  return `${statusOf(alias)} NOT IN (${REVENUE_EXCLUDES.map((s) => `'${s}'`).join(',')})`;
+}
+
+/**
  * Real work, according to the office rather than according to this file.
  *
  * The exclusions come out of isn_status_rules, which the owner can see and

@@ -98,11 +98,16 @@ function StatusRules() {
     <div className="setting" style={{ display: 'block', marginTop: 16 }}>
       <b>What ISN calls things</b>
       <span>
-        Every status your ISN has actually sent, with how many orders carry it. A status that
-        counts as work is drawn on the calendar and added up on Money; one that does not is left
-        off both. {off} turned off.{' '}
-        <b>An order with no day on it never reaches the calendar either way</b> — it goes on the
-        waiting list.
+        Every status your ISN has actually sent, with how many orders carry it. This decides what
+        is <b>drawn on the schedule</b> — the calendar, the week grid, the day list on the phone.
+        {' '}{off} turned off.{' '}
+        {/* This switch used to move revenue as well, so turning Complete off to
+            tidy a calendar quietly took 1,406 finished jobs out of the month's
+            takings. Whether a job is revenue is not a display preference. */}
+        <b>It does not touch Money.</b> Revenue counts every job except the ones that never
+        happened — cancelled, deleted, never scheduled — and a finished job is always revenue,
+        whatever you hide from the grid. An order with no day on it never reaches the calendar
+        either way; it goes on the waiting list.
       </span>
       {err && <div className="note" style={{ marginTop: 8 }}>{err}</div>}
       <div style={{ marginTop: 10 }}>
@@ -123,7 +128,7 @@ function StatusRules() {
             </span>
             <button className={`chip ${s.countsAsWork ? 'on' : ''}`} disabled={busy === s.status}
                     onClick={() => flip(s)}>
-              {s.countsAsWork ? 'Counts as work' : 'Left off'}
+              {s.countsAsWork ? 'On the schedule' : 'Left off'}
             </button>
           </div>
         ))}

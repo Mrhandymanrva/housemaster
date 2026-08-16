@@ -9,8 +9,8 @@
  * calendar as though somebody had booked it.
  */
 import assert from 'node:assert/strict';
-import { realWork, statusIs, statusIsNot, NOT_WORK, statusCensus, setStatusRule }
-  from './lib/orderStatus.js';
+import { realWork, statusIs, statusIsNot, NOT_WORK, statusCensus, setStatusRule,
+  countsAsRevenue, REVENUE_EXCLUDES } from './lib/orderStatus.js';
 import { readFileSync } from 'node:fs';
 
 let pass = 0;
@@ -103,6 +103,36 @@ t('no query carries its own copy of the status list', () => {
     assert.ok(!/order_status NOT IN \(/.test(src),
       `${f} still writes the status list out by hand`);
   }
+});
+
+console.log('\nmoney is not a display preference');
+
+t('revenue has one definition and no switch on it', () => {
+  // The switches were wired into the revenue queries as well as the grids.
+  // Turning Complete off to tidy up a calendar took 1,406 finished jobs out of
+  // the month's takings, silently, and made the number useless. A finished job
+  // is revenue. What gets drawn on a calendar is a different question.
+  const sql = countsAsRevenue('o');
+  assert.ok(!/isn_status_rules/.test(sql), 'no switch reaches this');
+  assert.deepEqual(REVENUE_EXCLUDES, ['canceled', 'cancelled', 'deleted', 'unscheduled']);
+  assert.match(sql, /lower\(btrim\(coalesce\(o\.order_status, ''\)\)\)/, 'still case-blind');
+});
+
+t('no money query can be moved by a switch', () => {
+  // The line that must not be crossed again, checked rather than remembered.
+  for (const f of ['lib/money.js', 'lib/revenueCheck.js']) {
+    const src = readFileSync(new URL(`./${f}`, import.meta.url), 'utf8');
+    assert.ok(!/realWork/.test(src), `${f} reads the schedule switches`);
+    assert.ok(/countsAsRevenue/.test(src), `${f} should define revenue for itself`);
+  }
+});
+
+t("the dashboard's booked figure is money too", () => {
+  // It sits on Home next to schedule counts, which is exactly how it got the
+  // wrong filter in the first place.
+  const src = readFileSync(new URL('./routes/ops.js', import.meta.url), 'utf8');
+  const money = src.slice(src.indexOf('SUM(total_fee) FILTER'), src.indexOf('R.weekStart, R.weekEnd, R.monthStart'));
+  assert.match(money, /countsAsRevenue/);
 });
 
 console.log('\nwhat ISN actually calls things');

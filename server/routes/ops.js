@@ -10,7 +10,7 @@ import { planClaim, changesAnything } from '../lib/kitClaim.js';
 import { moneyReport } from '../lib/money.js';
 import { weekBoard } from '../lib/weekBoard.js';
 import { calendarMonth, unscheduledOrders } from '../lib/calendar.js';
-import { realWork } from '../lib/orderStatus.js';
+import { realWork, countsAsRevenue } from '../lib/orderStatus.js';
 
 /**
  * Some records are more than a row.
@@ -289,7 +289,7 @@ r.get('/field/today', requireAuth, wrap(async (req, res) => {
            WHERE scheduled_start >= $3 AND scheduled_start < $4 AND NOT paid), 0) AS month_unpaid
        FROM isn_orders
       WHERE total_fee IS NOT NULL
-        AND ${realWork('')}`,
+        AND ${countsAsRevenue('')}`,
       [R.weekStart, R.weekEnd, R.monthStart, R.monthEnd]) : { rows: [] },
   ]);
 
