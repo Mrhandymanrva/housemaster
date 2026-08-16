@@ -103,7 +103,8 @@ t('ops serves the screens that hang off it', () => {
 t('isn serves its link and its diagnostics', () => {
   has(isn, 'GET /status', 'POST /sync', 'PATCH /connection',
     'GET /probe', 'GET /order-lookup', 'GET /revenue-check',
-    'GET /roster', 'POST /roster/adopt');
+    'GET /roster', 'POST /roster/adopt',
+    'GET /statuses', 'PATCH /statuses');
 });
 
 t('the ways in and out are all there', () => {

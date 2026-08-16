@@ -202,10 +202,10 @@ await ta('leaves out work that is not work', async () => {
   const c = db();
   await calendarMonth(c, '2026-08', { now: new Date('2026-08-14T12:00:00Z') });
   const asked = c.seen.find((x) => /FROM isn_orders/.test(x.text));
-  // Folded and trimmed, so "unscheduled" cannot slip past a filter that was
-  // looking for "Unscheduled" — see orderStatus.test.js.
+  // Folded and trimmed, and the exclusions come from the office's own rules
+  // rather than a list written in here — see orderStatus.test.js.
   assert.match(asked.text, /lower\(btrim\(coalesce\(o\.order_status/);
-  assert.match(asked.text, /NOT IN \('canceled','cancelled','deleted','unscheduled'\)/);
+  assert.match(asked.text, /NOT IN \(SELECT status FROM isn_status_rules WHERE NOT counts_as_work\)/);
   assert.match(asked.text, /scheduled_start IS NOT NULL/);
 });
 

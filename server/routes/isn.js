@@ -10,8 +10,28 @@ import { officeRanges, periodRange } from '../lib/zone.js';
 import { revenueCheck } from '../lib/revenueCheck.js';
 import { pullEvents, pullAvailability } from '../integrations/isnCalendar.js';
 import { isnGet } from '../integrations/isn.js';
+import { statusCensus, setStatusRule } from '../lib/orderStatus.js';
 
 const r = Router();
+
+/**
+ * What ISN calls things, and what the app does about each one.
+ *
+ * Open to anyone signed in to read — it explains why a job is or is not on a
+ * screen — but only the office can change what counts as work, because that
+ * decision moves numbers on the Money page.
+ */
+r.get('/statuses', requireAuth, wrap(async (_req, res) => {
+  res.json({ statuses: await statusCensus({ query: q }) });
+}));
+
+r.patch('/statuses', requireAuth, requireRole('office'), wrap(async (req, res) => {
+  const { status, countsAsWork } = req.body || {};
+  if (typeof status !== 'string') throw bad('Which status?');
+  if (typeof countsAsWork !== 'boolean') throw bad('Say true or false for whether it is work.');
+  const saved = await setStatusRule({ query: q }, status, countsAsWork);
+  res.json({ ...saved, statuses: await statusCensus({ query: q }) });
+}));
 
 r.get('/status', requireAuth, wrap(async (_req, res) => {
   const [conn, runs, gaps, cached, services, why] = await Promise.all([

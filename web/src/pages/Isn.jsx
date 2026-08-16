@@ -62,6 +62,76 @@ function AvailabilityLine({ a }) {
   );
 }
 
+/**
+ * What ISN calls things, and what each word does to the screens.
+ *
+ * Two rounds went into working out why unscheduled orders were on the
+ * calendar, both spent reasoning about what ISN probably calls them. It calls
+ * them whatever this office set up, which is knowable — it is in the data.
+ * So rather than a third guess, here is the list with counts beside it, and
+ * the decision belongs to whoever runs the branch.
+ */
+function StatusRules() {
+  const [rows, setRows] = useState(null);
+  const [busy, setBusy] = useState(null);
+  const [err, setErr] = useState(null);
+
+  useEffect(() => {
+    api('/isn/statuses').then((d) => setRows(d.statuses)).catch(() => setRows(false));
+  }, []);
+
+  const flip = async (s) => {
+    setBusy(s.status); setErr(null);
+    try {
+      const d = await api('/isn/statuses', {
+        method: 'PATCH',
+        body: { status: s.status, countsAsWork: !s.countsAsWork },
+      });
+      setRows(d.statuses);
+    } catch (e) { setErr(e.message); } finally { setBusy(null); }
+  };
+
+  if (rows === false || !rows) return null;
+  const off = rows.filter((s) => !s.countsAsWork).length;
+
+  return (
+    <div className="setting" style={{ display: 'block', marginTop: 16 }}>
+      <b>What ISN calls things</b>
+      <span>
+        Every status your ISN has actually sent, with how many orders carry it. A status that
+        counts as work is drawn on the calendar and added up on Money; one that does not is left
+        off both. {off} turned off.{' '}
+        <b>An order with no day on it never reaches the calendar either way</b> — it goes on the
+        waiting list.
+      </span>
+      {err && <div className="note" style={{ marginTop: 8 }}>{err}</div>}
+      <div style={{ marginTop: 10 }}>
+        {rows.map((s) => (
+          <div key={s.status} className="day-row">
+            <span className="d-who" style={{ width: 170 }}>
+              {s.asWritten || s.status || <i>(no status)</i>}
+            </span>
+            <span className="d-where">
+              {s.orders} order{s.orders === 1 ? '' : 's'}
+              {/* The number that matters for the calendar: how many of them
+                  carry a date and so could be drawn on a day. */}
+              {s.dated > 0 && <>, {s.dated} with a date on {s.dated === 1 ? 'it' : 'them'}</>}
+              {s.orders === 0 && <> — a rule with nothing behind it</>}
+              {/* Plain, not a tag: the tag style shouts in capitals, and a
+                  whole sentence shouted is harder to read than no sentence. */}
+              {s.note && <span style={{ color: 'var(--text-3)' }}> · {s.note}</span>}
+            </span>
+            <button className={`chip ${s.countsAsWork ? 'on' : ''}`} disabled={busy === s.status}
+                    onClick={() => flip(s)}>
+              {s.countsAsWork ? 'Counts as work' : 'Left off'}
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function Isn() {
   const [status, setStatus] = useState(null);
   const [roster, setRoster] = useState(null);
@@ -381,6 +451,8 @@ export default function Isn() {
               {events.availability && <AvailabilityLine a={events.availability} />}
             </div>
           )}
+
+          <StatusRules />
 
           <RevenueCheck />
 

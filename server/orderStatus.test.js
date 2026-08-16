@@ -9,25 +9,41 @@
  * calendar as though somebody had booked it.
  */
 import assert from 'node:assert/strict';
-import { realWork, statusIs, statusIsNot, NOT_WORK } from './lib/orderStatus.js';
+import { realWork, statusIs, statusIsNot, NOT_WORK, statusCensus, setStatusRule }
+  from './lib/orderStatus.js';
 import { readFileSync } from 'node:fs';
 
 let pass = 0;
 const t = (name, fn) => { fn(); pass++; console.log('  ok  ' + name); };
+const ta = async (name, fn) => { await fn(); pass++; console.log('  ok  ' + name); };
 
 /**
- * The SQL is a string here, so read it the way Postgres would: fold and trim
- * the value, then check it against the list the predicate carries.
+ * Read the predicate the way Postgres would, with a stand-in for the rules
+ * table: fold and trim the value, then apply the exclusions.
  */
-function wouldKeep(sql, status) {
-  const list = /NOT IN \(([^)]*)\)/.exec(sql)[1]
-    .split(',').map((s) => s.trim().replace(/^'|'$/g, ''));
-  return !list.includes(String(status ?? '').trim().toLowerCase());
+function wouldKeep(sql, status, excluded = ['canceled', 'cancelled', 'deleted', 'unscheduled']) {
+  const v = String(status ?? '').trim().toLowerCase();
+  if (!/NOT IN \(SELECT status FROM isn_status_rules WHERE NOT counts_as_work\)/.test(sql)) {
+    throw new Error('the exclusions no longer come from the rules table');
+  }
+  if (excluded.includes(v)) return false;
+  // Any literal the caller tacked on, e.g. realWork('', ['complete']).
+  for (const m of sql.matchAll(/<> '([^']*)'/g)) if (m[1] === v) return false;
+  return true;
 }
 
 console.log('\nwhat counts as work');
 
-t('drops the ones that were never work, however they are written', () => {
+t('asks the office rather than deciding for itself', () => {
+  // The rule used to be a list written in this file, which is a guess at
+  // another company's vocabulary — and it was wrong twice. What each of ISN's
+  // words means is a fact about how this branch runs, so it lives in a table
+  // the owner can see and change.
+  assert.match(realWork('o'),
+    /NOT IN \(SELECT status FROM isn_status_rules WHERE NOT counts_as_work\)/);
+});
+
+t('drops whatever the rules exclude, however it is written', () => {
   const sql = realWork('o');
   for (const s of ['Unscheduled', 'unscheduled', 'UNSCHEDULED', '  Unscheduled  ',
     'Canceled', 'cancelled', 'Deleted']) {
@@ -35,14 +51,16 @@ t('drops the ones that were never work, however they are written', () => {
   }
 });
 
-t('keeps everything else', () => {
+t('keeps everything else, including a word nobody has ruled on', () => {
+  // A new status appearing in ISN shows up on the calendar and gets turned off
+  // deliberately. The other way round it would vanish and never be missed.
   const sql = realWork('o');
   for (const s of ['Scheduled', 'Complete', 'In Progress', 'Pending', 'On Hold']) {
     assert.equal(wouldKeep(sql, s), true, `${s} is somebody's booked work`);
   }
 });
 
-t('covers both spellings of cancelled', () => {
+t('seeds both spellings of cancelled', () => {
   // ISN is American and the office is not. Whichever comes back, it is the
   // same job that is not happening.
   assert.ok(NOT_WORK.includes('canceled') && NOT_WORK.includes('cancelled'));
@@ -85,6 +103,58 @@ t('no query carries its own copy of the status list', () => {
     assert.ok(!/order_status NOT IN \(/.test(src),
       `${f} still writes the status list out by hand`);
   }
+});
+
+console.log('\nwhat ISN actually calls things');
+
+const census = (seen, rules) => ({
+  async query(text) {
+    if (/FROM isn_status_rules/.test(text)) return { rows: rules };
+    return { rows: seen };
+  },
+});
+
+await ta('lists every status ISN has sent, busiest first', async () => {
+  const out = await statusCensus(census([
+    { status: 'scheduled', orders: 120, dated: 120, as_written: 'Scheduled', latest: null },
+    { status: 'complete', orders: 300, dated: 300, as_written: 'Complete', latest: null },
+  ], []));
+  assert.deepEqual(out.map((s) => s.status), ['complete', 'scheduled']);
+  assert.equal(out[0].asWritten, 'Complete', 'as ISN writes it, so it is recognisable');
+  assert.equal(out[0].countsAsWork, true, 'and a status nobody has ruled on is work');
+});
+
+await ta('sinks the ones already turned off to the bottom', async () => {
+  // The list is for finding a word that should not be on the calendar, so the
+  // ones still on it lead.
+  const out = await statusCensus(census([
+    { status: 'canceled', orders: 90, dated: 90, as_written: 'Canceled', latest: null },
+    { status: 'scheduled', orders: 12, dated: 12, as_written: 'Scheduled', latest: null },
+  ], [{ status: 'canceled', counts_as_work: false, note: 'Called off.' }]));
+  assert.deepEqual(out.map((s) => s.status), ['scheduled', 'canceled']);
+  assert.equal(out[1].note, 'Called off.');
+});
+
+await ta('shows a rule with no orders behind it rather than hiding it', async () => {
+  // Otherwise a rule sits there doing nothing and nobody can tell.
+  const out = await statusCensus(census([], [{ status: 'deleted', counts_as_work: false }]));
+  assert.equal(out.length, 1);
+  assert.equal(out[0].orders, 0);
+});
+
+await ta('counts how many carry a date, which is what reaches the calendar', async () => {
+  const out = await statusCensus(census([
+    { status: 'pending', orders: 20, dated: 3, as_written: 'Pending', latest: null },
+  ], []));
+  assert.equal(out[0].orders, 20);
+  assert.equal(out[0].dated, 3, 'only these could be drawn on a day');
+});
+
+await ta('folds a status on the way in, because that is how they are stored', async () => {
+  const seen = [];
+  await setStatusRule({ async query(text, params) { seen.push(params); return { rows: [] }; } },
+    '  PENDING ', false);
+  assert.deepEqual(seen[0], ['pending', false]);
 });
 
 console.log(`\n${pass} checks passed\n`);
