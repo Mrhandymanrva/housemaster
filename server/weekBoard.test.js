@@ -101,6 +101,50 @@ await ta('asks Postgres for the day as text, so it cannot come back a Date', asy
   assert.match(asked.text, /to_char\(o\.scheduled_start AT TIME ZONE \$3, 'YYYY-MM-DD'\) AS on_day/);
 });
 
+console.log('\ntwo cards for one job');
+
+await ta('marks two orders at one address and one hour rather than picking one', async () => {
+  // Straight off the screen: the same address twice at 9:00 on one inspector's
+  // Tuesday. ISN holds them as separate orders with separate ids, so the sync
+  // is right to keep both — but a second card is how a morning gets planned
+  // around a job that is not there. Which one is live is not knowable here,
+  // and quietly dropping one would be worse than saying there are two.
+  const out = await weekBoard(db([
+    job({ id: 'a', day: '2026-08-10', who: 'e1', name: 'John Candler',
+      addr: '7551 English Boxwood Ln', time: '9:00 AM' }),
+    job({ id: 'b', day: '2026-08-10', who: 'e1', name: 'John Candler',
+      addr: '7551 English Boxwood Ln', time: '9:00 AM' }),
+    job({ id: 'c', day: '2026-08-10', who: 'e1', name: 'John Candler',
+      addr: '7803 Lycoming Rd', time: '1:00 PM' }),
+  ], [{ id: 'e1', full_name: 'John Candler' }]), RANGE);
+
+  const day = out.inspectors.find((x) => x.employeeId === 'e1').days['2026-08-10'];
+  assert.deepEqual(day.map((s) => s.twin), [2, 2, undefined]);
+  assert.equal(day.length, 3, 'both are still shown');
+});
+
+await ta('does not call two different jobs at the same hour a duplicate', async () => {
+  // Three at 1pm across three addresses is a busy afternoon, not a fault.
+  const out = await weekBoard(db([
+    job({ id: 'a', day: '2026-08-11', who: 'e1', name: 'Bobby', addr: '2112 Avada Dr', time: '1:00 PM' }),
+    job({ id: 'b', day: '2026-08-11', who: 'e1', name: 'Bobby', addr: '1685 Chopping Rd', time: '1:00 PM' }),
+    job({ id: 'c', day: '2026-08-11', who: 'e1', name: 'Bobby', addr: '10774 Sunset Wds Ct', time: '1:00 PM' }),
+  ], [{ id: 'e1', full_name: 'Bobby' }]), RANGE);
+
+  const day = out.inspectors.find((x) => x.employeeId === 'e1').days['2026-08-11'];
+  assert.ok(day.every((s) => !s.twin));
+});
+
+await ta('keeps the status on the slot, so a card can say what it is', async () => {
+  // Colour cannot carry it. A finished job and a booked one were the same
+  // shade of blue, which is the difference between work you did and work you
+  // still have to do.
+  const out = await weekBoard(db([
+    job({ id: 'a', day: '2026-08-10', who: 'e1', name: 'Bobby', status: 'Complete' }),
+  ], [{ id: 'e1', full_name: 'Bobby' }]), RANGE);
+  assert.equal(out.inspectors[0].days['2026-08-10'][0].status, 'Complete');
+});
+
 console.log('\nwhat must not disappear');
 
 await ta('a job with nobody assigned gets its own row, last', async () => {

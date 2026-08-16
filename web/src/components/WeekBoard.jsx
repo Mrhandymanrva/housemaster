@@ -15,6 +15,13 @@ import { money } from '../lib/format.js';
  * a job with nobody on it gets its own row at the bottom rather than being
  * dropped for having no inspector to sit under.
  */
+/**
+ * The statuses that just mean "this is on the books" and need no label. Every
+ * other word ISN uses gets printed on the card, because a card that looks
+ * booked and is not is the one that wastes somebody's morning.
+ */
+const BOOKED = new Set(['scheduled', 'confirmed', '']);
+
 export default function WeekBoard({ board, onOpen }) {
   const { days, inspectors, totals } = board;
   const today = new Intl.DateTimeFormat('en-CA', {
@@ -39,10 +46,19 @@ export default function WeekBoard({ board, onOpen }) {
       <div className="legend">
         <span><i className="sw job" /> Inspection</span>
         <span><i className="sw radon" /> With radon</span>
+        <span><i className="sw un" /> Nobody assigned to it</span>
         {board.blocked && <span><i className="sw block" /> Blocked off</span>}
         {board.availability && <span><i className="sw away" /> Not available</span>}
-        <span><i className="sw un" /> Nobody assigned</span>
         <span style={{ color: 'var(--text-3)' }}>Dashed — nothing booked</span>
+        {/* Colour is not the only channel and should not be the only key. A
+            card carrying a word is a card that is not simply booked, which is
+            the thing somebody actually needs to spot. */}
+        <span style={{ color: 'var(--text-3)' }}>
+          <b className="mk">radon</b> printed on the card too
+        </span>
+        <span style={{ color: 'var(--text-3)' }}>
+          <b className="mk st">complete</b> and any other word ISN uses for a job
+        </span>
       </div>
 
       <div className="card-body" style={{ overflowX: 'auto' }}>
@@ -90,10 +106,24 @@ export default function WeekBoard({ board, onOpen }) {
                       ) : (
                         <button key={s.id}
                                 className={`slot ${p.unassigned ? 'unassigned' : 'job'} ${s.radon ? 'radon' : ''}`}
-                                title={`${s.time} · ${s.address}${s.city ? `, ${s.city}` : ''}`
-                                  + (board.money ? ` · ${money(s.fee)}` : '')}
+                                title={[s.time, s.address + (s.city ? `, ${s.city}` : ''),
+                                  s.status, s.radon ? 'with radon' : null,
+                                  board.money ? money(s.fee) : null]
+                                  .filter(Boolean).join(' · ')}
                                 onClick={() => onOpen?.(s)}>
-                          <span className="t">{s.time}</span>
+                          <span className="t">
+                            {s.time}
+                            {/* Colour alone cannot carry these. Two pale shades
+                                a card apart are indistinguishable to plenty of
+                                people, and a job's status is the difference
+                                between work you are doing and work you did. */}
+                            {s.radon && <span className="mk">radon</span>}
+                            {s.status && !BOOKED.has(String(s.status).trim().toLowerCase())
+                              && <span className="mk st">{s.status}</span>}
+                            {/* Two orders, one address, one hour. Which is live
+                                is not something the app can know. */}
+                            {s.twin && <span className="mk st">{s.twin} orders here</span>}
+                          </span>
                           <span className="w">{s.address}</span>
                         </button>
                       )))}

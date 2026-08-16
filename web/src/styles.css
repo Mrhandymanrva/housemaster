@@ -966,8 +966,14 @@ textarea.input { min-height: 92px; resize: vertical; }
 .daysum b { display: block; color: var(--text-2); font-size: 13px; }
 .week tfoot td { border-top: 1px solid var(--line); border-bottom: none; }
 
-.week .sw { width: 14px; height: 14px; border-radius: 4px; display: inline-block;
-            border: 1px solid transparent; }
+/* Not `.week .sw`: the legend sits beside the table rather than inside it, so
+   that selector never matched and the swatches fell back to `.legend i` — an
+   11×4 hairline. A key nobody can see is not a key. Written to outrank that
+   rule, which is one element and one class and would otherwise still win. */
+.legend i.sw, .sw {
+  width: 15px; height: 15px; border-radius: 4px; display: inline-block;
+  border: 1px solid transparent; flex-shrink: 0;
+}
 .sw.job { background: var(--blue-bg); border-color: #CBDDF2; }
 .sw.radon { background: var(--violet-bg); border-color: #D8D2F3; }
 .sw.un { background: var(--amber-bg); border-color: #F0D9A8; }
@@ -1048,4 +1054,18 @@ textarea.input { min-height: 92px; resize: vertical; }
 .tag {
   margin-left: 7px; font-size: 10.5px; text-transform: uppercase; letter-spacing: .04em;
   padding: 2px 6px; border-radius: 5px; background: var(--surface-3); color: var(--text-3);
+}
+
+/* A word on a card, for what colour cannot say on its own: two pale shades a
+   card apart are indistinguishable to plenty of people, and "complete" versus
+   "booked" is the difference between work you did and work you have to do. */
+.slot .mk {
+  display: inline-block; margin-left: 5px; padding: 0 4px; border-radius: 4px;
+  font-size: 9.5px; font-weight: 600; letter-spacing: .03em; text-transform: uppercase;
+  vertical-align: 1px; background: rgba(16, 24, 40, .07); color: inherit; opacity: .85;
+}
+.slot .mk.st { background: rgba(16, 24, 40, .14); }
+.legend .mk {
+  padding: 0 4px; border-radius: 4px; font-size: 9.5px; font-weight: 600;
+  text-transform: uppercase; background: rgba(16, 24, 40, .07); color: var(--text-2);
 }

@@ -141,6 +141,29 @@ export async function weekBoard(client, range, { zone = OFFICE_ZONE } = {}) {
     if (r.has_radon) line.radon += 1;
   }
 
+  // Two orders at the same address at the same hour, on one person's day. ISN
+  // holds them as separate orders with separate ids, so the sync is right to
+  // keep both — but one of them is usually a re-issue of the other, and a
+  // second card is how a morning gets planned around a job that is not there.
+  //
+  // Marked rather than dropped. The app cannot know which of the two is the
+  // live one, and quietly picking would be worse than saying there are two.
+  for (const line of rows.values()) {
+    for (const d of Object.keys(line.days)) {
+      const seen = new Map();
+      for (const s of line.days[d]) {
+        if (s.kind !== 'job') continue;
+        const k = `${String(s.address).trim().toLowerCase()}|${s.time}`;
+        seen.set(k, (seen.get(k) || 0) + 1);
+      }
+      for (const s of line.days[d]) {
+        if (s.kind !== 'job') continue;
+        const k = `${String(s.address).trim().toLowerCase()}|${s.time}`;
+        if (seen.get(k) > 1) s.twin = seen.get(k);
+      }
+    }
+  }
+
   const byDay = Object.fromEntries(days.map((d) => [d.date, { booked: 0, jobs: 0 }]));
   for (const r of jobs.rows) {
     const d = byDay[dayKey(r.on_day)];
