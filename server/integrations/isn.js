@@ -652,6 +652,165 @@ export function normalizeOrder(order, extras = {}) {
 // ------------------------------------------------------------------ sync
 
 /**
+ * How much of the near-term schedule one sync re-reads, and how far ahead
+ * "near-term" goes.
+ *
+ * A slice rather than the lot, so a sync costs roughly what it did before and
+ * the whole forward window still comes round every few runs. The button on the
+ * ISN screen does the whole window at once for when somebody wants it now.
+ */
+const RECHECK_PER_SYNC = 150;
+const RECHECK_DAYS = 45;
+
+/**
+ * Re-read what we believe is coming up, whatever the change feed says.
+ *
+ * Ordered by how long ago each was last read, so attention goes to the
+ * staleest first and every order in the window comes round. Yesterday is
+ * included because a job moved off today still has to leave today.
+ */
+export async function recheckSoon(c, counts, failures, limit = RECHECK_PER_SYNC,
+  days = RECHECK_DAYS) {
+  const { rows } = await q(
+    `SELECT isn_order_id FROM isn_orders
+      WHERE scheduled_start >= now() - interval '2 days'
+        AND scheduled_start <  now() + ($1 || ' days')::interval
+      ORDER BY last_pulled_at ASC NULLS FIRST
+      LIMIT $2`,
+    [String(days), limit]);
+
+  for (const row of rows) {
+    await pullOrder(row.isn_order_id, null, c, counts, failures);
+  }
+  return rows.length;
+}
+
+/**
+ * Read one order from ISN and write it down.
+ *
+ * Pulled out of the sync loop so the reconcile pass can use the same path.
+ * Two callers, one definition of what an order looks like once it lands —
+ * a second copy of this would drift, and it is the only place that decides
+ * what the app believes about a job.
+ */
+async function pullOrder(orderId, footprintId, c, counts, failures) {
+    try {
+      const order = unwrap(await getOrder(orderId), 'order');
+
+      // The list stub says nothing about which branch an order belongs to,
+      // so on a shared ISN this is the first point at which we can tell.
+      const ours = c.isn_office_id || null;
+      if (ours && order?.office && String(order.office) !== ours) {
+        counts.skippedOffice += 1;
+        if (footprintId) { await dropFootprint(footprintId); counts.deleted += 1; }
+        return;
+      }
+
+      const leadInspector = Array.from({ length: 10 }, (_, i) => order[`inspector${i + 1}`])
+        .find((x) => x);
+      const [client, agent, inspector] = await Promise.all([
+        order.client ? getClient(order.client).then((x) => unwrap(x, 'client')).catch(() => null) : null,
+        order.buyersagent ? getAgent(order.buyersagent).then((x) => unwrap(x, 'agent')).catch(() => null) : null,
+        leadInspector ? getUser(leadInspector).then((x) => unwrap(x, 'user')).catch(() => null) : null,
+      ]);
+
+      const o = normalizeOrder(order, { client, agent, inspector });
+      // Against the raw order, which still has services and fees apart —
+      // a booked service is a sale, a zero fee line is a price list.
+      const { has: radon, why: radonWhy } = radonMatch(order, c.radon_service_match);
+
+      const saved = await tx(async (t) => {
+        const row = (await t.query(
+          `INSERT INTO isn_orders
+             (isn_order_id, order_number, order_url, scheduled_start, scheduled_end,
+              inspector_isn_id, inspector_name, employee_id,
+              property_address, property_city, property_state, property_zip,
+              square_feet, year_built, foundation_type,
+              client_name, client_phone, client_email, agent_name, agent_email,
+              services, sold_services, has_radon, radon_fee, radon_reason, order_status,
+              isn_office_id, total_fee, paid, crew_isn_ids, crew_employee_ids,
+              isn_modified, raw, last_pulled_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,
+                   (SELECT id FROM employees WHERE isn_user_id = $6 LIMIT 1),
+                   $8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,
+                   $20::jsonb,$21::jsonb,$22,$23,$24,$25,$26,$27,$28,
+                   $29::text[],
+                   (SELECT COALESCE(array_agg(e2.id), '{}')
+                      FROM unnest($29::text[]) AS x(isn_id)
+                      JOIN employees e2 ON e2.isn_user_id = x.isn_id),
+                   $30, $31::jsonb, now())
+           ON CONFLICT (isn_order_id) DO UPDATE SET
+             scheduled_start = EXCLUDED.scheduled_start,
+             scheduled_end   = EXCLUDED.scheduled_end,
+             inspector_isn_id= EXCLUDED.inspector_isn_id,
+             inspector_name  = EXCLUDED.inspector_name,
+             employee_id     = EXCLUDED.employee_id,
+             property_address= EXCLUDED.property_address,
+             property_city   = EXCLUDED.property_city,
+             property_zip    = EXCLUDED.property_zip,
+             client_name     = EXCLUDED.client_name,
+             client_phone    = EXCLUDED.client_phone,
+             client_email    = EXCLUDED.client_email,
+             agent_name      = EXCLUDED.agent_name,
+             services        = EXCLUDED.services,
+             sold_services   = EXCLUDED.sold_services,
+             has_radon       = EXCLUDED.has_radon,
+             radon_fee       = EXCLUDED.radon_fee,
+             radon_reason    = EXCLUDED.radon_reason,
+             order_status    = EXCLUDED.order_status,
+             isn_office_id   = EXCLUDED.isn_office_id,
+             total_fee       = EXCLUDED.total_fee,
+             paid            = EXCLUDED.paid,
+             crew_isn_ids      = EXCLUDED.crew_isn_ids,
+             crew_employee_ids = EXCLUDED.crew_employee_ids,
+             isn_modified      = EXCLUDED.isn_modified,
+             raw             = EXCLUDED.raw,
+             last_pulled_at  = now()
+           RETURNING id, has_radon`,
+          [o.isn_order_id, o.order_number, o.order_url, o.scheduled_start, o.scheduled_end,
+           o.inspector_isn_id, o.inspector_name,
+           o.property_address, o.property_city, o.property_state, o.property_zip,
+           o.square_feet, o.year_built, o.foundation_type,
+           o.client_name, o.client_phone, o.client_email, o.agent_name, o.agent_email,
+           JSON.stringify(o.services), JSON.stringify(soldServices(order)),
+           radon, radonFee(o.services), radonWhy, o.order_status, o.isn_office_id,
+           o.total_fee, o.paid, o.crew, o.isn_modified,
+           JSON.stringify(order)]
+        )).rows[0];
+
+        let setId = null;
+        if (radon && c.auto_create_sets) {
+          setId = (await t.query('SELECT isn_draft_radon_set($1) AS id', [row.id])).rows[0].id;
+        } else {
+          // This order used to look like radon and does not any more. Void
+          // the draft nobody has touched — a set with a monitor on it or a
+          // reading against it is somebody's work and is left alone.
+          await t.query(
+            `UPDATE radon_tests SET status = 'Voided'
+              WHERE isn_order_uuid = $1 AND status = 'Scheduled'
+                AND NOT EXISTS (SELECT 1 FROM radon_deployments d
+                                 WHERE d.radon_test_id = radon_tests.id)`,
+            [row.id]
+          );
+        }
+        return { orderRow: row, setId };
+      });
+
+      counts.orders += 1;
+      if (saved.setId) counts.sets += 1;
+
+      // Committed. Now, and only now, ISN may forget about it.
+      if (footprintId) {
+        await dropFootprint(footprintId);
+        counts.deleted += 1;
+      }
+    } catch (err) {
+      // One bad order does not stop the run, and its footprint survives.
+      failures.push({ orderId, error: String(err.message || err).slice(0, 300) });
+    }
+}
+
+/**
  * One pass over the footprint queue.
  *
  * Per footprint: pull the order, pull its client and agent, write it locally,
@@ -667,7 +826,7 @@ export async function syncOnce({ source = 'schedule' } = {}) {
   )).rows[0];
 
   const counts = { footprints: 0, listed: 0, unchanged: 0, remaining: 0,
-                   orders: 0, sets: 0, deleted: 0, skippedOffice: 0 };
+                   orders: 0, sets: 0, deleted: 0, skippedOffice: 0, rechecked: 0 };
   const failures = [];
 
   try {
@@ -741,121 +900,23 @@ export async function syncOnce({ source = 'schedule' } = {}) {
     for (const o of fresh.slice(0, ceiling)) work.set(String(o.id), null);
 
     for (const [orderId, footprintId] of work) {
-      try {
-        const order = unwrap(await getOrder(orderId), 'order');
-
-        // The list stub says nothing about which branch an order belongs to,
-        // so on a shared ISN this is the first point at which we can tell.
-        const ours = c.isn_office_id || null;
-        if (ours && order?.office && String(order.office) !== ours) {
-          counts.skippedOffice += 1;
-          if (footprintId) { await dropFootprint(footprintId); counts.deleted += 1; }
-          continue;
-        }
-
-        const leadInspector = Array.from({ length: 10 }, (_, i) => order[`inspector${i + 1}`])
-          .find((x) => x);
-        const [client, agent, inspector] = await Promise.all([
-          order.client ? getClient(order.client).then((x) => unwrap(x, 'client')).catch(() => null) : null,
-          order.buyersagent ? getAgent(order.buyersagent).then((x) => unwrap(x, 'agent')).catch(() => null) : null,
-          leadInspector ? getUser(leadInspector).then((x) => unwrap(x, 'user')).catch(() => null) : null,
-        ]);
-
-        const o = normalizeOrder(order, { client, agent, inspector });
-        // Against the raw order, which still has services and fees apart —
-        // a booked service is a sale, a zero fee line is a price list.
-        const { has: radon, why: radonWhy } = radonMatch(order, c.radon_service_match);
-
-        const saved = await tx(async (t) => {
-          const row = (await t.query(
-            `INSERT INTO isn_orders
-               (isn_order_id, order_number, order_url, scheduled_start, scheduled_end,
-                inspector_isn_id, inspector_name, employee_id,
-                property_address, property_city, property_state, property_zip,
-                square_feet, year_built, foundation_type,
-                client_name, client_phone, client_email, agent_name, agent_email,
-                services, sold_services, has_radon, radon_fee, radon_reason, order_status,
-                isn_office_id, total_fee, paid, crew_isn_ids, crew_employee_ids,
-                isn_modified, raw, last_pulled_at)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,
-                     (SELECT id FROM employees WHERE isn_user_id = $6 LIMIT 1),
-                     $8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,
-                     $20::jsonb,$21::jsonb,$22,$23,$24,$25,$26,$27,$28,
-                     $29::text[],
-                     (SELECT COALESCE(array_agg(e2.id), '{}')
-                        FROM unnest($29::text[]) AS x(isn_id)
-                        JOIN employees e2 ON e2.isn_user_id = x.isn_id),
-                     $30, $31::jsonb, now())
-             ON CONFLICT (isn_order_id) DO UPDATE SET
-               scheduled_start = EXCLUDED.scheduled_start,
-               scheduled_end   = EXCLUDED.scheduled_end,
-               inspector_isn_id= EXCLUDED.inspector_isn_id,
-               inspector_name  = EXCLUDED.inspector_name,
-               employee_id     = EXCLUDED.employee_id,
-               property_address= EXCLUDED.property_address,
-               property_city   = EXCLUDED.property_city,
-               property_zip    = EXCLUDED.property_zip,
-               client_name     = EXCLUDED.client_name,
-               client_phone    = EXCLUDED.client_phone,
-               client_email    = EXCLUDED.client_email,
-               agent_name      = EXCLUDED.agent_name,
-               services        = EXCLUDED.services,
-               sold_services   = EXCLUDED.sold_services,
-               has_radon       = EXCLUDED.has_radon,
-               radon_fee       = EXCLUDED.radon_fee,
-               radon_reason    = EXCLUDED.radon_reason,
-               order_status    = EXCLUDED.order_status,
-               isn_office_id   = EXCLUDED.isn_office_id,
-               total_fee       = EXCLUDED.total_fee,
-               paid            = EXCLUDED.paid,
-               crew_isn_ids      = EXCLUDED.crew_isn_ids,
-               crew_employee_ids = EXCLUDED.crew_employee_ids,
-               isn_modified      = EXCLUDED.isn_modified,
-               raw             = EXCLUDED.raw,
-               last_pulled_at  = now()
-             RETURNING id, has_radon`,
-            [o.isn_order_id, o.order_number, o.order_url, o.scheduled_start, o.scheduled_end,
-             o.inspector_isn_id, o.inspector_name,
-             o.property_address, o.property_city, o.property_state, o.property_zip,
-             o.square_feet, o.year_built, o.foundation_type,
-             o.client_name, o.client_phone, o.client_email, o.agent_name, o.agent_email,
-             JSON.stringify(o.services), JSON.stringify(soldServices(order)),
-             radon, radonFee(o.services), radonWhy, o.order_status, o.isn_office_id,
-             o.total_fee, o.paid, o.crew, o.isn_modified,
-             JSON.stringify(order)]
-          )).rows[0];
-
-          let setId = null;
-          if (radon && c.auto_create_sets) {
-            setId = (await t.query('SELECT isn_draft_radon_set($1) AS id', [row.id])).rows[0].id;
-          } else {
-            // This order used to look like radon and does not any more. Void
-            // the draft nobody has touched — a set with a monitor on it or a
-            // reading against it is somebody's work and is left alone.
-            await t.query(
-              `UPDATE radon_tests SET status = 'Voided'
-                WHERE isn_order_uuid = $1 AND status = 'Scheduled'
-                  AND NOT EXISTS (SELECT 1 FROM radon_deployments d
-                                   WHERE d.radon_test_id = radon_tests.id)`,
-              [row.id]
-            );
-          }
-          return { orderRow: row, setId };
-        });
-
-        counts.orders += 1;
-        if (saved.setId) counts.sets += 1;
-
-        // Committed. Now, and only now, ISN may forget about it.
-        if (footprintId) {
-          await dropFootprint(footprintId);
-          counts.deleted += 1;
-        }
-      } catch (err) {
-        // One bad order does not stop the run, and its footprint survives.
-        failures.push({ orderId, error: String(err.message || err).slice(0, 300) });
-      }
+      await pullOrder(orderId, footprintId, c, counts, failures);
     }
+
+    // Everything above trusts ISN to say what changed. The week grid proved it
+    // cannot be trusted for that: order 23662 sat on Tuesday under Bobby here
+    // while ISN had it on Wednesday under John, and nothing in the change feed
+    // ever said so. Whatever the reason — a `modified` that does not move when
+    // a job is dragged across the board, a footprint another integration
+    // consumed first — the effect is a schedule that is quietly wrong, which is
+    // the worst thing this app can be.
+    //
+    // So the near future is not taken on trust. Orders we believe are coming up
+    // get re-read whatever the feed says, oldest-read first, a slice at a time
+    // so a sync stays cheap. A job that moved, got cancelled or was handed to
+    // somebody else corrects itself within a couple of runs instead of sitting
+    // there being wrong until somebody notices.
+    counts.rechecked = await recheckSoon(c, counts, failures, RECHECK_PER_SYNC);
 
     const status = failures.length ? 'partial' : 'ok';
     await q(
@@ -865,7 +926,7 @@ export async function syncOnce({ source = 'schedule' } = {}) {
       [run.id, status, counts.footprints, counts.orders, counts.sets, counts.deleted,
        JSON.stringify({ failures, listed: counts.listed, unchanged: counts.unchanged,
                         remaining: counts.remaining, skippedOffice: counts.skippedOffice,
-                        window, lookback })]
+                        rechecked: counts.rechecked ?? 0, window, lookback })]
     );
     await q(
       `UPDATE isn_connection SET last_sync_at = now(), last_sync_status = $1,

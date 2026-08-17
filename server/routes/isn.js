@@ -3,7 +3,8 @@ import { Router } from 'express';
 import { q, tx } from '../lib/db.js';
 import { wrap, bad } from '../lib/http.js';
 import { requireAuth, requireRole } from '../lib/auth.js';
-import { syncOnce, probe, getMe, extractList, unwrap, refreshUsers, listedByIsn, describeShape }
+import { syncOnce, probe, getMe, extractList, unwrap, refreshUsers, listedByIsn, describeShape,
+  recheckSoon }
   from '../integrations/isn.js';
 import { isnScheduleState } from '../isnSchedule.js';
 import { officeRanges, periodRange } from '../lib/zone.js';
@@ -15,11 +16,46 @@ import { statusCensus, setStatusRule } from '../lib/orderStatus.js';
 const r = Router();
 
 /**
+ * Re-read the whole near-term schedule now, rather than a slice per sync.
+ *
+ * For when somebody is looking at a grid that disagrees with ISN and wants it
+ * right this minute. It costs a call per order in the window, which is why the
+ * scheduled sync takes it a slice at a time and this is a button.
+ */
+r.post('/recheck', requireAuth, requireRole('office'), wrap(async (_req, res) => {
+  const c = (await q('SELECT * FROM isn_connection LIMIT 1')).rows[0];
+  if (!c?.enabled) throw bad('ISN sync is switched off.');
+
+  const before = (await q(
+    `SELECT isn_order_id, scheduled_start, employee_id, order_status FROM isn_orders
+      WHERE scheduled_start >= now() - interval '2 days'
+        AND scheduled_start < now() + interval '45 days'`)).rows;
+
+  const counts = { orders: 0, sets: 0, deleted: 0, skippedOffice: 0 };
+  const failures = [];
+  const looked = await recheckSoon(c, counts, failures, 1000);
+
+  // What actually moved, which is the only interesting part of the answer.
+  const after = new Map((await q(
+    `SELECT isn_order_id, scheduled_start, employee_id, order_status FROM isn_orders`)).rows
+    .map((x) => [x.isn_order_id, x]));
+  const changed = before.filter((b) => {
+    const a = after.get(b.isn_order_id);
+    if (!a) return false;
+    return String(a.scheduled_start) !== String(b.scheduled_start)
+      || String(a.employee_id) !== String(b.employee_id)
+      || String(a.order_status) !== String(b.order_status);
+  }).length;
+
+  res.json({ looked, changed, failures: failures.slice(0, 5), failureCount: failures.length });
+}));
+
+/**
  * What ISN calls things, and what the app does about each one.
  *
  * Open to anyone signed in to read — it explains why a job is or is not on a
- * screen — but only the office can change what counts as work, because that
- * decision moves numbers on the Money page.
+ * screen — but only the office can change it, because that decides what the
+ * whole branch sees on the schedule.
  */
 r.get('/statuses', requireAuth, wrap(async (_req, res) => {
   res.json({ statuses: await statusCensus({ query: q }) });

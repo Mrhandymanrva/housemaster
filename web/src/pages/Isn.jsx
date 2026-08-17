@@ -147,6 +147,7 @@ export default function Isn() {
   const [probe, setProbe] = useState(null);
   const [probePath, setProbePath] = useState('');
   const [events, setEvents] = useState(null);
+  const [recheck, setRecheck] = useState(null);
   const [orderNo, setOrderNo] = useState('');
   const [lookup, setLookup] = useState(null);
 
@@ -381,6 +382,45 @@ export default function Isn() {
                   <option key={d} value={d}>{d} days — about {reach(d)}</option>
                 ))}
               </select>
+            </span>
+          </div>
+
+          {/*
+            * The grid disagreeing with ISN is the worst thing this app can do,
+            * and it happened: orders that were moved in ISN sat here on their
+            * old day because the change feed never mentioned them. The sync now
+            * re-reads the near future a slice at a time; this does the lot now,
+            * for somebody standing in front of a wrong screen.
+            */}
+          <div className="setting" style={{ marginTop: 16 }}>
+            <div style={{ minWidth: 0 }}>
+              <b>Schedule does not match ISN</b>
+              <span>
+                Re-reads every job booked from yesterday to six weeks out, straight from ISN,
+                ignoring what its change feed claims has moved. A job that was rescheduled,
+                cancelled or handed to somebody else lands on the right day. The sync does a
+                slice of this every time it runs; this does all of it now.
+              </span>
+              {recheck && (
+                <div className={recheck.failureCount ? 'note' : 'ok'} style={{ marginTop: 8 }}>
+                  Re-read {recheck.looked} job{recheck.looked === 1 ? '' : 's'}.{' '}
+                  {recheck.changed
+                    ? <><b>{recheck.changed}</b> {recheck.changed === 1 ? 'was' : 'were'} out of
+                        date here and {recheck.changed === 1 ? 'has' : 'have'} been corrected.</>
+                    : <>Everything already matched ISN.</>}
+                  {recheck.failureCount > 0 && <> {recheck.failureCount} could not be
+                    read: {recheck.failures.map((f) => f.error).join(' · ')}</>}
+                </div>
+              )}
+            </div>
+            <span style={{ marginLeft: 'auto', flexShrink: 0 }}>
+              <button className="btn" disabled={busy === 'recheck'}
+                      onClick={() => run('recheck', async () => {
+                        setRecheck(await api('/isn/recheck', { method: 'POST', body: {} }));
+                        await load();
+                      })}>
+                {busy === 'recheck' ? <span className="spinner" /> : null} Re-read the schedule
+              </button>
             </span>
           </div>
 

@@ -104,7 +104,7 @@ t('isn serves its link and its diagnostics', () => {
   has(isn, 'GET /status', 'POST /sync', 'PATCH /connection',
     'GET /probe', 'GET /order-lookup', 'GET /revenue-check',
     'GET /roster', 'POST /roster/adopt',
-    'GET /statuses', 'PATCH /statuses');
+    'GET /statuses', 'PATCH /statuses', 'POST /recheck');
 });
 
 t('the ways in and out are all there', () => {
