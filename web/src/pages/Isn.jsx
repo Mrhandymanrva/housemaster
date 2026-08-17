@@ -73,11 +73,14 @@ function AvailabilityLine({ a }) {
  */
 function StatusRules() {
   const [rows, setRows] = useState(null);
+  const [flags, setFlags] = useState([]);
   const [busy, setBusy] = useState(null);
   const [err, setErr] = useState(null);
 
   useEffect(() => {
-    api('/isn/statuses').then((d) => setRows(d.statuses)).catch(() => setRows(false));
+    api('/isn/statuses')
+      .then((d) => { setRows(d.statuses); setFlags(d.flags || []); })
+      .catch(() => setRows(false));
   }, []);
 
   const flip = async (s) => {
@@ -133,6 +136,39 @@ function StatusRules() {
           </div>
         ))}
       </div>
+
+      {/*
+        * The app never read a status from ISN. It made one up: a date on the
+        * order meant Scheduled, no date meant Unscheduled — so an order ISN
+        * lists as unscheduled that still carries a date and an inspector drew
+        * itself on the grid as though somebody were driving to it.
+        *
+        * ISN has a real flag. Rather than guess its name a third time, here is
+        * every yes/no field it sends, counted. ISN's own banner says how many
+        * unscheduled orders it has; the field whose "no" matches that number is
+        * the one, and reading it off two screens beats any amount of reasoning
+        * from in here.
+        */}
+      {flags.length > 0 && (
+        <div style={{ marginTop: 16, paddingTop: 14, borderTop: '1px solid var(--line)' }}>
+          <b>Which field says a job is not scheduled?</b>
+          <span style={{ display: 'block', color: 'var(--text-2)', fontSize: 13.5, margin: '4px 0 10px' }}>
+            The app has been deciding this itself — a date on the order meant scheduled — which is
+            why orders ISN lists as unscheduled turn up on the grid. These are every yes/no field
+            ISN sends. <b>ISN's own banner says how many unscheduled orders you have;</b> the field
+            whose <i>no</i> matches that number is the one to read, and I will wire it to that.
+          </span>
+          {flags.map((f) => (
+            <div key={f.field} className="day-row">
+              <span className="d-who mono" style={{ width: 200 }}>{f.field}</span>
+              <span className="d-where">
+                {f.yes} yes · <b>{f.no} no</b>
+                {f.no_live !== f.no && <> ({f.no_live} of those not deleted)</>}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

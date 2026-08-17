@@ -128,6 +128,39 @@ export async function statusCensus(client) {
     || String(a.status).localeCompare(String(b.status)));
 }
 
+/**
+ * Which field in ISN's payload says a job is not on the schedule.
+ *
+ * The app never read one. It made the status up: a date on the order meant
+ * Scheduled, no date meant Unscheduled. But ISN's own screen lists orders as
+ * unscheduled that carry a date, a time and an inspector — 23642 and 23670
+ * among them — and those drew themselves on the week grid as though somebody
+ * were driving to them.
+ *
+ * Rather than guess at the field name for a third time, this counts every
+ * yes/no field ISN actually sends. ISN's own banner says how many unscheduled
+ * orders it has; the field whose "no" count matches that number is the field,
+ * and no amount of reasoning from here beats reading it off the two screens.
+ *
+ * Only yes/no values are reported, never the rest of the payload — an order
+ * carries a client's name, phone and address, and none of that is needed to
+ * find a flag.
+ */
+export async function flagCensus(client) {
+  const { rows } = await client.query(
+    `SELECT key AS field,
+            count(*) FILTER (WHERE lower(value) IN ('yes','true','1'))::int  AS yes,
+            count(*) FILTER (WHERE lower(value) IN ('no','false','0'))::int  AS no,
+            count(*) FILTER (WHERE lower(value) IN ('no','false','0')
+                               AND ${statusOf('o')} <> 'deleted')::int       AS no_live
+       FROM isn_orders o, LATERAL jsonb_each_text(o.raw) AS e(key, value)
+      WHERE lower(value) IN ('yes','no','true','false','0','1')
+      GROUP BY key
+     HAVING count(*) FILTER (WHERE lower(value) IN ('no','false','0')) > 0
+      ORDER BY 3 DESC, 1`);
+  return rows;
+}
+
 /** Turn one status on or off. Folded, because that is how they are stored. */
 export async function setStatusRule(client, status, countsAsWork) {
   const key = String(status ?? '').trim().toLowerCase();

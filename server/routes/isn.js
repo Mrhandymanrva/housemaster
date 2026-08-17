@@ -11,7 +11,7 @@ import { officeRanges, periodRange } from '../lib/zone.js';
 import { revenueCheck } from '../lib/revenueCheck.js';
 import { pullEvents, pullAvailability } from '../integrations/isnCalendar.js';
 import { isnGet } from '../integrations/isn.js';
-import { statusCensus, setStatusRule } from '../lib/orderStatus.js';
+import { statusCensus, setStatusRule, flagCensus } from '../lib/orderStatus.js';
 
 const r = Router();
 
@@ -80,7 +80,14 @@ r.post('/recheck', requireAuth, requireRole('office'), wrap(async (_req, res) =>
  * whole branch sees on the schedule.
  */
 r.get('/statuses', requireAuth, wrap(async (_req, res) => {
-  res.json({ statuses: await statusCensus({ query: q }) });
+  const [statuses, flags] = await Promise.all([
+    statusCensus({ query: q }),
+    // Which yes/no field ISN uses for "not scheduled". The app has been
+    // inventing that status rather than reading one, which is how orders ISN
+    // itself lists as unscheduled ended up drawn on the week grid.
+    flagCensus({ query: q }).catch(() => []),
+  ]);
+  res.json({ statuses, flags });
 }));
 
 r.patch('/statuses', requireAuth, requireRole('office'), wrap(async (req, res) => {
