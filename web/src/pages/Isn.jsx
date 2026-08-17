@@ -410,6 +410,17 @@ export default function Isn() {
                     : <>Everything already matched ISN.</>}
                   {recheck.failureCount > 0 && <> {recheck.failureCount} could not be
                     read: {recheck.failures.map((f) => f.error).join(' · ')}</>}
+                  {/* Named, so it can be checked against ISN's own board rather
+                      than taken on trust — which is what got us here. */}
+                  {recheck.moved?.length > 0 && (
+                    <div style={{ marginTop: 6 }}>
+                      {recheck.moved.map((m) => (
+                        <div key={m.orderNumber} style={{ fontSize: 12.5 }}>
+                          <span className="mono">#{m.orderNumber}</span> {m.address} — {m.what}
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
             </div>

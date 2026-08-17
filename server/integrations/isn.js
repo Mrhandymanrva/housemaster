@@ -663,17 +663,23 @@ const RECHECK_PER_SYNC = 150;
 const RECHECK_DAYS = 45;
 
 /**
- * Re-read what we believe is coming up, whatever the change feed says.
+ * Re-read what we believe is booked around now, whatever the change feed says.
  *
- * Ordered by how long ago each was last read, so attention goes to the
- * staleest first and every order in the window comes round. Yesterday is
- * included because a job moved off today still has to leave today.
+ * The window reaches backwards as well as forwards, and that is the whole
+ * point rather than a detail. A job moved from the 5th to the 18th is wrong on
+ * this week's grid, but the row we hold still says the 5th — so looking only
+ * at what we think is upcoming would never open it, and the 18th would stay
+ * missing no matter how often the recheck ran. It has to be found where it
+ * used to be.
+ *
+ * Ordered by how long ago each was last read, so the staleest come first and
+ * everything in the window comes round.
  */
 export async function recheckSoon(c, counts, failures, limit = RECHECK_PER_SYNC,
   days = RECHECK_DAYS) {
   const { rows } = await q(
     `SELECT isn_order_id FROM isn_orders
-      WHERE scheduled_start >= now() - interval '2 days'
+      WHERE scheduled_start >= now() - ($1 || ' days')::interval
         AND scheduled_start <  now() + ($1 || ' days')::interval
       ORDER BY last_pulled_at ASC NULLS FIRST
       LIMIT $2`,

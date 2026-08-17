@@ -28,26 +28,48 @@ r.post('/recheck', requireAuth, requireRole('office'), wrap(async (_req, res) =>
 
   const before = (await q(
     `SELECT isn_order_id, scheduled_start, employee_id, order_status FROM isn_orders
-      WHERE scheduled_start >= now() - interval '2 days'
+      WHERE scheduled_start >= now() - interval '45 days'
         AND scheduled_start < now() + interval '45 days'`)).rows;
 
   const counts = { orders: 0, sets: 0, deleted: 0, skippedOffice: 0 };
   const failures = [];
-  const looked = await recheckSoon(c, counts, failures, 1000);
+  const looked = await recheckSoon(c, counts, failures, 2000);
 
-  // What actually moved, which is the only interesting part of the answer.
+  // What actually moved. Named rather than counted: the office is comparing
+  // this against ISN's own board, and "9 corrected" cannot be checked while
+  // "23662 moved to the 19th" can.
   const after = new Map((await q(
-    `SELECT isn_order_id, scheduled_start, employee_id, order_status FROM isn_orders`)).rows
-    .map((x) => [x.isn_order_id, x]));
-  const changed = before.filter((b) => {
-    const a = after.get(b.isn_order_id);
-    if (!a) return false;
-    return String(a.scheduled_start) !== String(b.scheduled_start)
-      || String(a.employee_id) !== String(b.employee_id)
-      || String(a.order_status) !== String(b.order_status);
-  }).length;
+    `SELECT isn_order_id, order_number, scheduled_start, employee_id, order_status,
+            property_address
+       FROM isn_orders`)).rows.map((x) => [x.isn_order_id, x]));
 
-  res.json({ looked, changed, failures: failures.slice(0, 5), failureCount: failures.length });
+  const day = (v) => (v ? new Date(v).toISOString().slice(0, 10) : null);
+  const moved = [];
+  for (const b of before) {
+    const a = after.get(b.isn_order_id);
+    if (!a) continue;
+    const what = [];
+    if (day(a.scheduled_start) !== day(b.scheduled_start)) {
+      what.push(`moved to ${day(a.scheduled_start) || 'no date'}`);
+    } else if (String(a.scheduled_start) !== String(b.scheduled_start)) {
+      what.push('time changed');
+    }
+    if (String(a.employee_id) !== String(b.employee_id)) what.push('different inspector');
+    if (String(a.order_status) !== String(b.order_status)) {
+      what.push(`now ${a.order_status || 'no status'}`);
+    }
+    if (what.length) {
+      moved.push({ orderNumber: a.order_number, address: a.property_address, what: what.join(', ') });
+    }
+  }
+
+  res.json({
+    looked,
+    changed: moved.length,
+    moved: moved.slice(0, 25),
+    failures: failures.slice(0, 5),
+    failureCount: failures.length,
+  });
 }));
 
 /**
