@@ -77,11 +77,15 @@ function StatusRules() {
   const [busy, setBusy] = useState(null);
   const [err, setErr] = useState(null);
 
-  useEffect(() => {
-    api('/isn/statuses')
-      .then((d) => { setRows(d.statuses); setFlags(d.flags || []); })
+  const [flagError, setFlagError] = useState(null);
+  const [oids, setOids] = useState('');
+
+  const loadStatuses = (orders = '') =>
+    api(`/isn/statuses${orders ? `?orders=${encodeURIComponent(orders)}` : ''}`)
+      .then((d) => { setRows(d.statuses); setFlags(d.flags || []); setFlagError(d.flagError); })
       .catch(() => setRows(false));
-  }, []);
+
+  useEffect(() => { loadStatuses(); }, []);
 
   const flip = async (s) => {
     setBusy(s.status); setErr(null);
@@ -149,26 +153,51 @@ function StatusRules() {
         * the one, and reading it off two screens beats any amount of reasoning
         * from in here.
         */}
-      {flags.length > 0 && (
-        <div style={{ marginTop: 16, paddingTop: 14, borderTop: '1px solid var(--line)' }}>
-          <b>Which field says a job is not scheduled?</b>
-          <span style={{ display: 'block', color: 'var(--text-2)', fontSize: 13.5, margin: '4px 0 10px' }}>
-            The app has been deciding this itself — a date on the order meant scheduled — which is
-            why orders ISN lists as unscheduled turn up on the grid. These are every yes/no field
-            ISN sends. <b>ISN's own banner says how many unscheduled orders you have;</b> the field
-            whose <i>no</i> matches that number is the one to read, and I will wire it to that.
-          </span>
-          {flags.map((f) => (
-            <div key={f.field} className="day-row">
-              <span className="d-who mono" style={{ width: 200 }}>{f.field}</span>
-              <span className="d-where">
-                {f.yes} yes · <b>{f.no} no</b>
-                {f.no_live !== f.no && <> ({f.no_live} of those not deleted)</>}
-              </span>
-            </div>
-          ))}
+      <div style={{ marginTop: 16, paddingTop: 14, borderTop: '1px solid var(--line)' }}>
+        <b>Which field says a job is not scheduled?</b>
+        <span style={{ display: 'block', color: 'var(--text-2)', fontSize: 13.5, margin: '4px 0 10px' }}>
+          The app decides this itself today — a date on the order means scheduled — which is why
+          orders ISN lists as <i>unscheduled</i> turn up on the grid carrying a date and an
+          inspector. These are every yes/no field ISN actually sends.{' '}
+          <b>ISN's banner says how many unscheduled orders you have;</b> the field whose <i>no</i>
+          {' '}matches it is the one to read. Or paste those order numbers in below and the answer
+          is whichever field reads <i>no</i> for all of them.
+        </span>
+
+        <div style={{ display: 'flex', gap: 8, margin: '0 0 12px' }}>
+          <input className="input" style={{ flex: 1 }} placeholder="23642 23670 23664 23669"
+                 value={oids} onChange={(e) => setOids(e.target.value)} />
+          <button className="btn" onClick={() => loadStatuses(oids)}>Compare these</button>
+          {oids && <button className="btn ghost" onClick={() => { setOids(''); loadStatuses(); }}>
+            All orders
+          </button>}
         </div>
-      )}
+
+        {flagError && (
+          <div className="note">
+            Could not read the fields: {flagError}
+          </div>
+        )}
+        {!flagError && flags.length === 0 && (
+          <div className="note">
+            No yes/no field came back at all. Either nothing has been synced yet, or ISN sends
+            these as something other than yes/no — worth a look at{' '}
+            <span className="mono">/order/23642</span> in the box further down.
+          </div>
+        )}
+        {flags.map((f) => (
+          <div key={f.field} className="day-row">
+            <span className="d-who mono" style={{ width: 190 }}>{f.field}</span>
+            <span className="d-where">
+              {f.yes_count} yes · <b>{f.no_count} no</b>
+              {f.no_live !== f.no_count && <> ({f.no_live} of those not deleted)</>}
+              {f.no_examples?.length > 0 && (
+                <span style={{ color: 'var(--text-3)' }}> · no on #{f.no_examples.join(', #')}</span>
+              )}
+            </span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

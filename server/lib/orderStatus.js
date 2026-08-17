@@ -146,18 +146,34 @@ export async function statusCensus(client) {
  * carries a client's name, phone and address, and none of that is needed to
  * find a flag.
  */
-export async function flagCensus(client) {
+export async function flagCensus(client, { numbers = [] } = {}) {
+  // Guarded inside the lateral, not in a WHERE. A row whose raw payload is not
+  // an object — null, or an array from some older shape — makes jsonb_each_text
+  // throw, and a WHERE clause filtering those out runs too late to save it.
+  const src = `jsonb_each_text(CASE WHEN jsonb_typeof(o.raw) = 'object'
+                                    THEN o.raw ELSE '{}'::jsonb END)`;
+  const YES = "lower(e.value) IN ('yes','true','1')";
+  const NO = "lower(e.value) IN ('no','false','0')";
+
+  // When order numbers are named, answer about those and nothing else — that
+  // is the comparison, and a field that reads no across a handful of known
+  // unscheduled orders is worth more than any count.
+  const only = numbers.length ? 'AND o.order_number = ANY($1::text[])' : '';
+
   const { rows } = await client.query(
-    `SELECT key AS field,
-            count(*) FILTER (WHERE lower(value) IN ('yes','true','1'))::int  AS yes,
-            count(*) FILTER (WHERE lower(value) IN ('no','false','0'))::int  AS no,
-            count(*) FILTER (WHERE lower(value) IN ('no','false','0')
-                               AND ${statusOf('o')} <> 'deleted')::int       AS no_live
-       FROM isn_orders o, LATERAL jsonb_each_text(o.raw) AS e(key, value)
-      WHERE lower(value) IN ('yes','no','true','false','0','1')
-      GROUP BY key
-     HAVING count(*) FILTER (WHERE lower(value) IN ('no','false','0')) > 0
-      ORDER BY 3 DESC, 1`);
+    `SELECT e.key AS field,
+            count(*) FILTER (WHERE ${YES})::int AS yes_count,
+            count(*) FILTER (WHERE ${NO})::int  AS no_count,
+            count(*) FILTER (WHERE ${NO} AND ${statusOf('o')} <> 'deleted')::int AS no_live,
+            (array_agg(o.order_number ORDER BY o.order_number)
+               FILTER (WHERE ${NO}))[1:6] AS no_examples
+       FROM isn_orders o
+       CROSS JOIN LATERAL ${src} AS e(key, value)
+      WHERE (${YES} OR ${NO}) ${only}
+      GROUP BY e.key
+     HAVING count(*) FILTER (WHERE ${NO}) > 0
+      ORDER BY 3 DESC, 1`,
+    numbers.length ? [numbers] : []);
   return rows;
 }
 

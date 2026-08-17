@@ -79,15 +79,27 @@ r.post('/recheck', requireAuth, requireRole('office'), wrap(async (_req, res) =>
  * screen — but only the office can change it, because that decides what the
  * whole branch sees on the schedule.
  */
-r.get('/statuses', requireAuth, wrap(async (_req, res) => {
-  const [statuses, flags] = await Promise.all([
-    statusCensus({ query: q }),
-    // Which yes/no field ISN uses for "not scheduled". The app has been
-    // inventing that status rather than reading one, which is how orders ISN
-    // itself lists as unscheduled ended up drawn on the week grid.
-    flagCensus({ query: q }).catch(() => []),
-  ]);
-  res.json({ statuses, flags });
+r.get('/statuses', requireAuth, wrap(async (req, res) => {
+  // Which yes/no field ISN uses for "not scheduled". The app has been
+  // inventing that status rather than reading one, which is how orders ISN
+  // itself lists as unscheduled ended up drawn on the week grid.
+  //
+  // `orders=23642,23670` narrows it to named orders, which turns a census into
+  // a comparison: put ISN's unscheduled ones in and the field that reads no
+  // across all of them is the answer.
+  const numbers = String(req.query.orders || '').split(/[,\s]+/).filter(Boolean).slice(0, 40);
+
+  let flags = [];
+  let flagError = null;
+  try {
+    flags = await flagCensus({ query: q }, { numbers });
+  } catch (e) {
+    // Said out loud. The first version of this swallowed its own error and the
+    // panel simply did not appear, which is a diagnostic hiding a diagnosis.
+    flagError = String(e.message || e).slice(0, 300);
+  }
+
+  res.json({ statuses: await statusCensus({ query: q }), flags, flagError, asked: numbers });
 }));
 
 r.patch('/statuses', requireAuth, requireRole('office'), wrap(async (req, res) => {
